@@ -126,11 +126,11 @@ DOE files: [`docs/doe/`](docs/doe/)
 
 ## Results (airborne acoustics, current)
 
-> Full breakdown with all plots, per-depth analysis, and feature importances: **[`results/RESULTS.md`](results/RESULTS.md)**
-
-All evaluation uses **complete plate runs as holdout units** — the model never
+All evaluation (except for DL) uses **complete plate runs as holdout units** — the model never
 sees any hole from a holdout run during training, feature selection, or
-hyperparameter tuning. This is the only protocol that reflects real deployment.
+hyperparameter tuning. DL holdout evaluation is done **using single files as holdout units**, 
+because the model has no mechanism to memorise a run-level scalar.
+This is the only protocol that reflects real deployment.
 
 ### Classical ML — ExtraTrees on 20 acoustic features
 

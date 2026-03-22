@@ -1,2 +1,0 @@
-holdout_mae,holdout_mae_raw,holdout_mae_snapped,snapping_applied,holdout_rmse,holdout_r2,n_test_rows,n_test_runs,goal_mae_threshold_mm,goal_met,doe_step_mm,mae_as_fraction_of_doe_step,bias_mean,abs_error_p50,abs_error_p90,abs_error_p95
-0.03194314868804675,0.03194314868804675,0.03194314868804675,False,0.046207829950700455,0.9746211500962595,343,7,0.05,True,0.1,0.31943148688046746,-0.0026807580174927604,0.020750000000001212,0.07141666666666598,0.09327499999999873
