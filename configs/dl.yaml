@@ -1,0 +1,92 @@
+# configs/dl.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Deep-learning training defaults.  Mirrors TrainConfig in vm_micro/dl/config.py.
+# Override any key via CLI: --dl.epochs=30 etc.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Task: "classification" | "regression"
+task: "classification"
+
+# Frontend: "logmel" | "cwt"
+feature_type: "logmel"
+
+# Model: "small_cnn" | "spec_resnet" | "hybrid_spec_transformer"
+model_type: "hybrid_spec_transformer"
+
+# Audio windowing
+sample_rate:    48000
+window_sec:     0.50
+window_hop_sec: 0.25
+
+# Log-Mel STFT
+n_fft:      2048
+hop_length: 512
+n_mels:     128
+fmin:       100.0
+fmax:       20000.0
+
+# CWT frontend
+cwt_wavelet:    "morl"
+cwt_num_scales: 64
+cwt_fmin:       200.0
+cwt_fmax:       20000.0
+cwt_precision:  10
+
+# Training loop
+batch_size:    16
+epochs:        20
+lr:            1.0e-3
+weight_decay:  1.0e-4
+patience:      5
+
+# Data loading
+num_workers:         4
+prefetch_factor:     2
+persistent_workers:  true
+pin_memory:          true
+
+# Reproducibility
+seed: 42
+min_windows_per_file:           1
+max_windows_per_file_train:     null
+
+# Hardware
+cache_audio:    true
+use_amp:        true
+device:         "auto"
+channels_last:  true
+torch_compile:  false
+
+# Regression rounding step (mm); null to disable
+rounding_step_mm: 0.1
+
+# Architecture
+backbone_embed_dim:          128
+transformer_layers:          2
+transformer_token_grid_size: 8
+dropout:                     0.20
+
+# SpecAugment
+specaugment_time_masks:   2
+specaugment_time_width:   8
+specaugment_freq_masks:   2
+specaugment_freq_width:   12
+
+# LR schedule & gradient clipping
+warmup_epochs: 2
+lr_min:        1.0e-5
+grad_clip:     1.0
+
+# Output
+save_training_plots:  true
+save_attention_maps:  true
+attention_examples:   4
+
+# Splitting
+split_strategy:    "stratified_random"
+evaluation_unit:   "file"
+group_mode:        "recording_root"
+train_fraction:    0.70
+val_fraction:      0.15
+test_fraction:     0.15
+n_repeats:         5

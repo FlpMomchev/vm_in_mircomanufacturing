@@ -1,0 +1,55 @@
+# configs/structure.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Structure-borne acoustic feature extraction defaults.
+# Sensor native rate: 3_125_000 Hz (from Virtual_Micro_Measurement/config.json).
+# After splitting per hole the signal duration is expected to be SHORT (< a few
+# seconds), so the 4-interval time-slicing from the VMM repo is NOT applied.
+# Features are extracted over the whole segment, matching the airborne logic.
+# ─────────────────────────────────────────────────────────────────────────────
+
+modality: "structure"
+
+# Native sensor sample rate
+native_sr: 3125000
+
+# Downsample rate (factor, applied via scipy.signal.decimate)
+# Result: 3_125_000 / 1000 = 3125 Hz
+ds_rate: 1000
+
+# HDF5 dataset keys (from measurement hardware)
+h5_data_key:  "measurement/data"
+h5_time_key:  "measurement/time_vector"
+
+# File glob for segmented HDF5 files
+file_glob: "**/*.h5"
+
+# STFT parameters (at downsampled rate ~3125 Hz)
+stft_window:            "hann"
+stft_nperseg_factor:    47.68
+stft_noverlap_factor:   0.5
+
+# CWT
+cwt_wavelet:    "morl"
+cwt_num_scales: 64     # kept same as airborne for feature alignment
+cwt_fmin:       50.0
+cwt_fmax:       1562.0  # Nyquist of downsampled signal
+
+# DWT
+dwt_wavelet:      "sym8"
+dwt_level:        5
+dwt_padding_mode: "constant"
+
+# Feature families (same names as airborne for unified selection stage)
+feature_families:
+  time:          true
+  frequency:     true
+  band_power:    true
+  machining:     false    # machining proxies are airborne-specific
+  timefrequency: true
+  statistical:   true
+  short_time:    true
+  dwt:           true
+  cwt:           true
+
+# Parallelism
+n_workers: 4

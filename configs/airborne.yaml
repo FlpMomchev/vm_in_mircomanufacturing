@@ -1,0 +1,56 @@
+# configs/airborne.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Airborne acoustic feature extraction defaults.
+# Matches the validated logic in notebooks/extraction.py (192 kHz mic).
+# ─────────────────────────────────────────────────────────────────────────────
+
+modality: "airborne"
+target_sr: 192000           # native mic sample rate; no resampling needed
+
+# Band-power features
+band_power_bands:
+  - [100,   1000]           # low
+  - [1000,  5000]           # drill fundamental
+  - [5000, 20000]           # mid-HF
+  - [20000, 96000]          # ultrasonic
+
+# Machining-environment proxy downsampled rates
+machining_env_sr:   24000
+machining_hf_sr:    64000
+machining_hf_proxy: "roughness"   # "roughness" | "ae"
+
+# DWT
+dwt_wavelet:  "db8"
+dwt_max_level: 8
+
+# CWT
+cwt_wavelet:    "morl"
+cwt_num_scales: 64
+cwt_fmin:       200.0
+cwt_fmax:       20000.0
+
+# Short-time statistics window
+short_time_frame_ms:  10.0
+short_time_hop_ms:    5.0
+
+# File glob for segmented audio
+file_glob: "**/*.flac"
+
+# Skip / trim signal edges (seconds)
+skip_start_s: 0.0
+skip_end_s:   0.0
+
+# Feature families to compute (all enabled by default)
+feature_families:
+  time:          true
+  frequency:     true
+  band_power:    true
+  machining:     true
+  timefrequency: true
+  statistical:   true
+  short_time:    true
+  dwt:           true
+  cwt:           true
+
+# Parallelism
+n_workers: 4

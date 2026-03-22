@@ -1,0 +1,34 @@
+# configs/fusion.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Fusion layer configuration.
+# Architecture: inverse-validation-MAE weighted average per modality,
+# with propagated Gaussian uncertainty.
+#
+# Fusion stages (in order):
+#   1. airborne_feat  + airborne_dl  -> airborne_ensemble
+#   2. structure_feat + structure_dl -> structure_ensemble  (future)
+#   3. airborne_ensemble + structure_ensemble -> final prediction
+#
+# Weights are derived from validation MAE stored alongside each model bundle.
+# If a modality is absent its weight is treated as 0 (skipped gracefully).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Intra-modality fusion (feature-based + DL)
+intra_modality:
+  method: "inverse_mae_weighted"   # only option for now; extend in fuser.py
+  min_weight: 0.05                 # floor to prevent zero-weight collapse
+
+# Inter-modality fusion (airborne + structure-borne)
+inter_modality:
+  method: "inverse_mae_weighted"
+  min_weight: 0.05
+
+# Uncertainty propagation
+uncertainty:
+  formula: "gaussian_propagation"  # sqrt(sum_i  w_i^2 * sigma_i^2)
+
+# Task for final output: "both" lets user choose at inference time
+task: "both"   # "regression" | "classification" | "both"
+
+# Depth class labels (mm) for classification head
+depth_levels_mm: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]

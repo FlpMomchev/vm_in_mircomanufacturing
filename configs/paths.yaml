@@ -1,0 +1,30 @@
+# configs/paths.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# All paths are relative to the project root UNLESS they start with "/" or "~".
+# Override any value on the CLI with --paths.<key>=<value>
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Raw recordings root (FLAC or HDF5 files, one recording per plate run)
+raw_airborne_dir:     "raw_data/airborne"
+raw_structure_dir:    "raw_data/structure_borne"
+
+# DOE manifest (Excel with sheet DOE_run_order)
+doe_xlsx:             "raw_data/Versuchsplan__Bohrungen.xlsx"
+doe_sheet:            "DOE_run_order"
+
+# Segmented audio output root (produced by split_audio script)
+segments_dir:         "all_outputs"
+
+# Feature CSVs
+features_airborne_csv:   "outputs/features/airborne/features.csv"
+features_structure_csv:  "outputs/features/structure/features.csv"
+
+# Model output roots (mirroring existing layout)
+outputs_dl:           "outputs/dl"
+outputs_features:     "outputs/features"
+outputs_structure:    "outputs/structure"
+outputs_fusion:       "outputs/fusion"
+
+# Held-out / augmented data
+unseen_dir:           "unseen"
+inflated_dir:         "inflated"

@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vm_in_micromanufacturing"
+version = "0.1.0"
+description = "Virtual metrology for micro-drilling depth prediction via airborne and structure-borne acoustic sensing."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    # Core scientific stack
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+
+    # Audio I/O
+    "soundfile>=0.12",
+    "librosa>=0.10",
+
+    # Signal / feature processing
+    "PyWavelets>=1.6",
+    "h5py>=3.11",
+    "openpyxl>=3.1",          # Excel DOE manifest loading
+
+    # DL framework
+    "torch>=2.3",
+    "torchaudio>=2.3",
+
+    # Gradient boosting (classical ML)
+    "xgboost>=2.0",
+    "lightgbm>=4.3",
+    "catboost>=1.2",
+
+    # Config & CLI helpers
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+    "joblib>=1.4",
+
+    # Visualisation
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+vm-split     = "scripts.split_audio:main"
+vm-extract-air = "scripts.extract_airborne:main"
+vm-extract-struct = "scripts.extract_structure:main"
+vm-select    = "scripts.select_features:main"
+vm-train-cls = "scripts.train_classical:main"
+vm-train-dl  = "scripts.train_dl:main"
+vm-infer     = "scripts.infer:main"
+vm-fuse      = "scripts.fuse:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vm_micro*", "scripts*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
