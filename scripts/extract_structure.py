@@ -35,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-csv", default=None)
     p.add_argument("--file-glob", default="**/*.h5")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument(
+        "--extractor",
+        default=None,
+        choices=["v1", "extensive"],
+        help="Feature extractor version: v1 (core.py-based, default) or "
+        "extensive (windowed, higher SR, WPD/MFCC). Overrides config.",
+    )
     p.add_argument("override", nargs="*", help="YAML config overrides, e.g. --ds_rate=500")
     return p
 
@@ -44,6 +51,9 @@ def main() -> None:
     cfg = load_config(args.config)
     if args.override:
         cfg = apply_overrides(cfg, args.override)
+
+    if args.extractor is not None:
+        cfg["extractor"] = args.extractor
 
     out_csv = args.out_csv or "outputs/structure/features.csv"
 

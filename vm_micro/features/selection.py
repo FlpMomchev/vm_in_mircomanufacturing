@@ -6,6 +6,10 @@ Uses the "inverted-cone" grouped strategy from notebooks/selection.py:
 
 1. Near-constant and high-missingness columns dropped.
 2. Low target-correlation columns dropped (Spearman threshold).
+2b. (Optional) Partial-correlation filter: drop features whose
+    Spearman correlation with the target does not survive after
+    controlling for a confound column (e.g. duration_s).
+    Enabled via ``min_partial_r`` in ``SelectionConfig``.
 3. VIF-based multicollinearity pruning.
 4. Consensus ranking from multiple methods:
    - Spearman |r| (univariate)
@@ -70,6 +74,8 @@ class SelectionConfig:
     max_missing_frac: float = 0.20
     near_constant_std: float = 1e-10
     min_target_abs_spearman: float = 0.10
+    min_partial_r: float | None = None
+    partial_control_col: str = "duration_s"
     vif_threshold: float = 5.0
     intercorr_threshold: float = 0.75
     preselect_top_n: int = 60
@@ -136,9 +142,31 @@ def select_features(
     feat_cols = [f for f, k in zip(feat_cols, corr_mask) if k]
     logger.info("After Spearman filter: %d features", len(feat_cols))
 
+    # ── Step 2b (optional): partial-correlation filter ────────────────────────
+    if cfg.min_partial_r is not None:
+        ctrl_col = cfg.partial_control_col
+        if ctrl_col not in df.columns:
+            logger.warning(
+                "Partial-correlation control column %r not found — skipping filter.", ctrl_col
+            )
+        else:
+            z = df[ctrl_col].to_numpy(dtype=np.float64)
+            partial_r, X, feat_cols = _partial_corr_filter(X, y, z, feat_cols, cfg.min_partial_r)
+            logger.info(
+                "After partial-r filter (|r|≥%.2f, controlling for %s): %d features",
+                cfg.min_partial_r,
+                ctrl_col,
+                len(feat_cols),
+            )
+
     # ── Step 3: intercorrelation pruning (greedy, keep highest |corr_target|) ─
+    # Recompute target correlations for the current feature set (may have
+    # changed after the optional partial-r filter in step 2b).
+    corr_current = np.array(
+        [abs(float(spearmanr(X[:, i], y).statistic)) for i in range(X.shape[1])]
+    )
     if X.shape[1] > 1:
-        feat_cols, X = _intercorr_prune(X, feat_cols, corr[corr_mask], cfg.intercorr_threshold)
+        feat_cols, X = _intercorr_prune(X, feat_cols, corr_current, cfg.intercorr_threshold)
     logger.info("After intercorr pruning: %d features", len(feat_cols))
 
     # ── Step 4: Pre-select top-N by Spearman before expensive methods ─────────
@@ -171,6 +199,38 @@ def select_features(
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _partial_corr_filter(
+    X: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    feat_cols: list[str],
+    threshold: float,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Keep only features whose |partial Spearman r| with *y*
+    (controlling for *z*) meets *threshold*.
+
+    Returns (partial_r_values, X_filtered, feat_cols_filtered).
+    """
+    from scipy.stats import rankdata
+
+    y_rank = rankdata(y)
+    z_rank = rankdata(z).reshape(-1, 1)
+
+    # Residualise y on z (rank space)
+    coef_y = np.linalg.lstsq(z_rank, y_rank, rcond=None)[0]
+    res_y = y_rank - z_rank @ coef_y
+
+    partial_r = np.empty(X.shape[1], dtype=np.float64)
+    for i in range(X.shape[1]):
+        x_rank = rankdata(X[:, i])
+        coef_x = np.linalg.lstsq(z_rank, x_rank, rcond=None)[0]
+        res_x = x_rank - z_rank @ coef_x
+        partial_r[i] = np.corrcoef(res_x, res_y)[0, 1]
+
+    mask = np.abs(partial_r) >= threshold
+    return partial_r[mask], X[:, mask], [f for f, k in zip(feat_cols, mask) if k]
 
 
 def _intercorr_prune(

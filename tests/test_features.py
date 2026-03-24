@@ -77,6 +77,72 @@ def test_band_power_features():
     result = compute_band_power_features(y, SR, bands=bands)
     assert result["band_500_2000_rms"] > result["band_100_500_rms"]
     assert result["band_500_2000_rms"] > result["band_2000_10000_rms"]
+    # Band ratios should exist and sum to ~1
+    ratio_sum = sum(v for k, v in result.items() if k.endswith("_ratio"))
+    assert ratio_sum == pytest.approx(1.0, abs=0.05)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# New feature families — basic sanity checks
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_hjorth_parameters():
+    y = _white_noise()
+    result = compute_time_features(y, SR)
+    assert "time_hjorth_activity" in result
+    assert "time_hjorth_mobility" in result
+    assert "time_hjorth_complexity" in result
+    assert result["time_hjorth_activity"] > 0
+    assert result["time_hjorth_mobility"] > 0
+    # Energy per sample should be close to time_rms^2
+    assert result["time_energy_ps"] == pytest.approx(result["time_rms"] ** 2, rel=0.01)
+
+
+def test_spectral_shape_features():
+    y = _white_noise()
+    result = compute_frequency_features(y, SR)
+    assert "freq_slope" in result
+    assert "freq_decrease" in result
+    assert "freq_skewness" in result
+    assert "freq_kurtosis" in result
+    for k in ["freq_slope", "freq_decrease", "freq_skewness", "freq_kurtosis"]:
+        assert np.isfinite(result[k]), f"{k} = {result[k]}"
+
+
+def test_dwt_energy_ratios():
+    y = _white_noise()
+    result = compute_dwt_features(y, SR, wavelet="db8", max_level=6)
+    ratio_keys = [k for k in result if k.endswith("_energy_ratio")]
+    assert len(ratio_keys) > 0
+    ratio_sum = sum(result[k] for k in ratio_keys)
+    assert ratio_sum == pytest.approx(1.0, abs=0.01)
+    # Normalised energy should also exist
+    normed_keys = [k for k in result if k.endswith("_energy_normed")]
+    assert len(normed_keys) == len(ratio_keys)
+
+
+def test_short_time_expanded():
+    y = _white_noise()
+    result = compute_short_time_features(y, SR, frame_ms=10.0, hop_ms=5.0)
+    # Should have 5 quantities × 6 stats = 30 features
+    assert len(result) >= 30
+    # Slope and IQR keys should exist
+    assert "st_rms_slope" in result
+    assert "st_rms_iqr" in result
+    assert "st_centroid_mean" in result
+    assert "st_energy_ps_med" in result
+
+
+def test_complexity_measures():
+    y = _white_noise()
+    result = compute_statistical_features(y, SR)
+    assert "stat_perm_entropy" in result
+    assert "stat_lempel_ziv" in result
+    # Permutation entropy of white noise should be close to 1 (normalised)
+    assert result["stat_perm_entropy"] > 0.9
+    # Lempel-Ziv of white noise should be high (close to 1)
+    assert result["stat_lempel_ziv"] > 0.5
 
 
 # ─────────────────────────────────────────────────────────────────────────────

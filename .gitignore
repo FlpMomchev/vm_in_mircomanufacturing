@@ -26,22 +26,11 @@ env/
 21and23.ipynb
 
 # Project outputs (large, local only)
-outputs/
-outputs_DL*/
-outputs_features*/
-outputs_structure*/
+models/
 catboost_info*/
 
 # Data (never commit raw or processed data)
-raw_data*/
-all_outputs*/
-inflated/
-unseen/
-difficult/
-viable/
-CWT_plots/
-stress_test_pack/
-structure_borne_sound/
+data*/
 
 # Model artefacts
 *.pt

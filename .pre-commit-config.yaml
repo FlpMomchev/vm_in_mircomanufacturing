@@ -1,13 +1,3 @@
-# .pre-commit-config.yaml
-# ─────────────────────────────────────────────────────────────────────────────
-# Install once after cloning:
-#   pip install pre-commit
-#   pre-commit install
-#
-# Run manually on all files:
-#   pre-commit run --all-files
-# ─────────────────────────────────────────────────────────────────────────────
-
 repos:
 
   # ── 1. General file hygiene ────────────────────────────────────────────────

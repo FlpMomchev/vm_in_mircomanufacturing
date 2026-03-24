@@ -7,6 +7,11 @@ measurements), applies decimation to reduce the very-high native sample rate
 (3.125 MHz → ~3 kHz), then computes the same feature families as the airborne
 extractor — minus the airborne-specific machining proxies.
 
+Supports two extractor versions selectable via ``extractor`` in config:
+- ``"v1"`` (default): core.py functions on single-step decimated signal.
+- ``"extensive"``: StructureBorneFeatureExtractorV2 with fixed-window analysis,
+  cascade decimation to ~48.8 kHz, WPD, cepstral, and normalised features.
+
 Key differences from airborne:
 - Input format: HDF5 (``measurement/data`` + ``measurement/time_vector``)
 - Native SR: 3_125_000 Hz; decimated with ``ds_rate`` before feature extraction
@@ -136,6 +141,69 @@ def extract_one_file(
         return None
 
 
+def _extract_one_file_extensive(
+    path: Path,
+    cfg: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Extract features using StructureBorneFeatureExtractorV2.
+
+    Reads the HDF5 the same way as the standard extractor, but passes
+    the *raw* signal (before decimation) to the extensive extractor,
+    which handles its own cascade decimation and windowed feature
+    extraction internally.
+    """
+    try:
+        from .structure_extensive import StructureBorneFeatureExtractorExtensive
+
+        h5_data_key = str(cfg.get("h5_data_key", "measurement/data"))
+        h5_time_key = str(cfg.get("h5_time_key", "measurement/time_vector"))
+
+        y_raw, sr_native, _tv, _meta = read_measurement_h5(
+            path,
+            data_key=h5_data_key,
+            time_key=h5_time_key,
+            center_signal=True,
+        )
+
+        if len(y_raw) < 64:
+            return None
+
+        # Build extensive extractor with config overrides
+        ext_kwargs: dict[str, Any] = {}
+        if "ext_ds_stages" in cfg:
+            ext_kwargs["ds_stages"] = list(cfg["ext_ds_stages"])
+        if "ext_window_s" in cfg:
+            ext_kwargs["window_s"] = float(cfg["ext_window_s"])
+        if "ext_hop_s" in cfg:
+            ext_kwargs["hop_s"] = float(cfg["ext_hop_s"])
+        if "ext_wpd_level" in cfg:
+            ext_kwargs["wpd_level"] = int(cfg["ext_wpd_level"])
+        if "ext_cwt_n_scales" in cfg:
+            ext_kwargs["cwt_n_scales"] = int(cfg["ext_cwt_n_scales"])
+
+        ext = StructureBorneFeatureExtractorExtensive(fs_native=sr_native, **ext_kwargs)
+        feats = ext.extract(y_raw.astype(np.float64))
+
+        stem = path.stem
+        meta: dict[str, Any] = {
+            "modality": "structure",
+            "record_name": stem,
+            "recording_root": extract_recording_root(stem),
+            "depth_mm": try_parse_depth_mm(stem),
+            "step_idx": try_parse_step_idx(stem),
+            "duration_s": float(len(y_raw) / sr_native),
+            "sr_hz_native": int(sr_native),
+            "sr_hz_used": int(ext.sr_hz_used),
+            "ds_rate": int(ext.ds_rate),
+            "file_path": str(path),
+        }
+        return {**meta, **dict(feats)}
+
+    except Exception:
+        logger.warning("Extensive extraction failed for %s:\n%s", path, traceback.format_exc())
+        return None
+
+
 def extract_structure(
     segments_dir: str | Path,
     cfg: dict[str, Any],
@@ -162,19 +230,28 @@ def extract_structure(
     if not paths:
         raise FileNotFoundError(f"No files matching {file_glob!r} under {segments_dir}")
 
-    logger.info("Structure-borne extraction: %d files (workers=%d)", len(paths), n_workers)
+    version = str(cfg.get("extractor", "v1")).lower()
+    extract_fn = _extract_one_file_extensive if version == "extensive" else extract_one_file
+    label = f"structure features ({version})"
+
+    logger.info(
+        "Structure-borne extraction [%s]: %d files (workers=%d)",
+        version,
+        len(paths),
+        n_workers,
+    )
 
     rows: list[dict[str, Any]] = []
 
     if n_workers <= 1:
-        for p in tqdm(paths, desc="structure features"):
-            row = extract_one_file(p, cfg)
+        for p in tqdm(paths, desc=label):
+            row = extract_fn(p, cfg)
             if row is not None:
                 rows.append(row)
     else:
         with ProcessPoolExecutor(max_workers=n_workers) as exe:
-            futures = {exe.submit(extract_one_file, p, cfg): p for p in paths}
-            for fut in tqdm(as_completed(futures), total=len(futures), desc="structure features"):
+            futures = {exe.submit(extract_fn, p, cfg): p for p in paths}
+            for fut in tqdm(as_completed(futures), total=len(futures), desc=label):
                 row = fut.result()
                 if row is not None:
                     rows.append(row)

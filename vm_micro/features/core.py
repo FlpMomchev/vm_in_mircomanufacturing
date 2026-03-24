@@ -47,7 +47,15 @@ def compute_time_features(y: np.ndarray, sr: int) -> dict[str, float]:
         "time_skewness": skew,
         "time_zcr": zcr,
         "time_energy": float(np.sum(y**2)),
+        "time_energy_ps": float(np.mean(y**2)),
         "time_p2p": float(np.ptp(y)),
+        # Hjorth parameters (activity, mobility, complexity)
+        "time_hjorth_activity": float(np.var(y)),
+        "time_hjorth_mobility": float(np.std(np.diff(y)) / (np.std(y) + 1e-18)),
+        "time_hjorth_complexity": float(
+            (np.std(np.diff(np.diff(y))) / (np.std(np.diff(y)) + 1e-18))
+            / (np.std(np.diff(y)) / (np.std(y) + 1e-18) + 1e-18)
+        ),
     }
 
 
@@ -83,6 +91,30 @@ def compute_frequency_features(y: np.ndarray, sr: int) -> dict[str, float]:
     peak_idx = int(np.argmax(mag))
     peak_freq = float(freqs[peak_idx])
 
+    # Spectral slope (linear regression of log-magnitude vs frequency)
+    log_power = np.log(power + 1e-18)
+    f_mean = float(np.mean(freqs))
+    denom = float(np.sum((freqs - f_mean) ** 2))
+    slope = (
+        float(np.sum((freqs - f_mean) * (log_power - np.mean(log_power))) / denom)
+        if denom > 0
+        else 0.0
+    )
+
+    # Spectral decrease
+    total_shifted = total - float(power[0]) + 1e-18
+    decrease = (
+        float(np.sum((power[1:] - power[0]) / (np.arange(1, len(power)) + 1e-18)) / total_shifted)
+        if len(power) > 1
+        else 0.0
+    )
+
+    # Spectral skewness and kurtosis (shape of the power distribution)
+    normed = (freqs - centroid) / (spread + 1e-18)
+    p_norm = power / total
+    ss_skew = float(np.sum((normed**3) * p_norm))
+    ss_kurt = float(np.sum((normed**4) * p_norm))
+
     return {
         "freq_centroid_hz": centroid,
         "freq_spread_hz": spread,
@@ -92,6 +124,10 @@ def compute_frequency_features(y: np.ndarray, sr: int) -> dict[str, float]:
         "freq_peak_mag": float(mag[peak_idx]),
         "freq_entropy": _spectral_entropy(power),
         "freq_total_power": total,
+        "freq_slope": slope,
+        "freq_decrease": decrease,
+        "freq_skewness": ss_skew,
+        "freq_kurtosis": ss_kurt,
     }
 
 
@@ -131,11 +167,14 @@ def compute_band_power_features(
     mag = np.abs(np.fft.rfft(y * np.hanning(n)))
 
     out: dict[str, float] = {}
+    total_power = float(np.sum(mag**2)) + 1e-18
     for lo, hi in bands:
         mask = (freqs >= lo) & (freqs < hi)
+        band_sum = float(np.sum(mag[mask] ** 2)) if mask.any() else 0.0
         rms = float(np.sqrt(np.mean(mag[mask] ** 2))) if mask.any() else 0.0
-        label = f"band_{int(lo)}_{int(hi)}_rms"
-        out[label] = rms
+        label_base = f"band_{int(lo)}_{int(hi)}"
+        out[f"{label_base}_rms"] = rms
+        out[f"{label_base}_ratio"] = band_sum / total_power
 
     return out
 
@@ -207,7 +246,7 @@ def _hf_band_signal(y: np.ndarray, sr: int, target_sr: int) -> np.ndarray:
 
 
 def compute_statistical_features(y: np.ndarray, sr: int) -> dict[str, float]:
-    """Higher-order statistics and percentile features."""
+    """Higher-order statistics, percentile features, and complexity measures."""
     y = np.asarray(y, dtype=np.float64)
     percentiles = [5, 10, 25, 50, 75, 90, 95]
     pct = np.percentile(y, percentiles)
@@ -215,6 +254,8 @@ def compute_statistical_features(y: np.ndarray, sr: int) -> dict[str, float]:
     out["stat_iqr"] = float(pct[4] - pct[2])  # 75th - 25th
     out["stat_median_abs_dev"] = float(np.median(np.abs(y - np.median(y))))
     out["stat_sample_entropy"] = _sample_entropy(y[:2048])  # limit length
+    out["stat_perm_entropy"] = _permutation_entropy(y[:5000])
+    out["stat_lempel_ziv"] = _lempel_ziv(y[:5000])
     return out
 
 
@@ -241,6 +282,51 @@ def _sample_entropy(y: np.ndarray, m: int = 2, r_frac: float = 0.2) -> float:
         return 0.0
 
 
+def _permutation_entropy(y: np.ndarray, order: int = 5, delay: int = 1) -> float:
+    """Normalised permutation entropy (Bandt & Pompe, 2002)."""
+    from math import factorial
+    from math import log2 as _log2
+
+    n = len(y)
+    max_perms = factorial(order)
+    if n < (order - 1) * delay + 1:
+        return 0.0
+    counts: dict[tuple, int] = {}
+    total = 0
+    for i in range(n - (order - 1) * delay):
+        motif = tuple(np.argsort(y[i : i + order * delay : delay]).tolist())
+        counts[motif] = counts.get(motif, 0) + 1
+        total += 1
+    if total == 0:
+        return 0.0
+    probs = np.array(list(counts.values()), dtype=np.float64) / total
+    H = -float(np.sum(probs * np.log2(probs + 1e-15)))
+    return H / _log2(max_perms)
+
+
+def _lempel_ziv(y: np.ndarray) -> float:
+    """Normalised Lempel-Ziv complexity (LZ76) on median-binarised signal."""
+    from math import log2 as _log2
+
+    binary = (y > np.median(y)).astype(np.int8)
+    n = len(binary)
+    if n <= 1:
+        return 0.0
+    sub_strings: set[tuple] = set()
+    w: list[int] = []
+    c = 0
+    for s in binary:
+        w.append(int(s))
+        if tuple(w) not in sub_strings:
+            sub_strings.add(tuple(w))
+            c += 1
+            w = []
+    if w:
+        c += 1
+    norm = n / _log2(n + 1) if n > 1 else 1.0
+    return c / norm
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Short-time statistics
 # ─────────────────────────────────────────────────────────────────────────────
@@ -252,7 +338,8 @@ def compute_short_time_features(
     frame_ms: float = 10.0,
     hop_ms: float = 5.0,
 ) -> dict[str, float]:
-    """Mean / std of per-frame RMS, crest factor, and ZCR."""
+    """Aggregated per-frame statistics: mean, std, median, IQR, slope, range
+    of per-frame RMS, crest factor, ZCR, spectral centroid, and energy."""
     y = np.asarray(y, dtype=np.float64)
     frame_n = max(1, int(round(sr * frame_ms / 1000.0)))
     hop_n = max(1, int(round(sr * hop_ms / 1000.0)))
@@ -269,15 +356,45 @@ def compute_short_time_features(
     peaks = np.max(np.abs(frames), axis=1)
     crest = np.where(rms > 0, peaks / rms, 0.0)
     zcr = np.sum(np.diff(np.sign(frames), axis=1) != 0, axis=1) / float(frame_n - 1)
+    energy_ps = np.mean(frames**2, axis=1)
 
-    return {
-        "st_rms_mean": float(np.mean(rms)),
-        "st_rms_std": float(np.std(rms)),
-        "st_crest_mean": float(np.mean(crest)),
-        "st_crest_std": float(np.std(crest)),
-        "st_zcr_mean": float(np.mean(zcr)),
-        "st_zcr_std": float(np.std(zcr)),
+    # Per-frame spectral centroid (lightweight: no full FFT, just for each frame)
+    freqs_frame = np.fft.rfftfreq(frame_n, d=1.0 / sr)
+    window = np.hanning(frame_n)
+    centroids = np.empty(len(frames))
+    for i in range(len(frames)):
+        spec = np.abs(np.fft.rfft(frames[i] * window)) ** 2
+        total = spec.sum() + 1e-18
+        centroids[i] = float(np.sum(freqs_frame * spec) / total)
+
+    out: dict[str, float] = {}
+    quantities = {
+        "st_rms": rms,
+        "st_crest": crest,
+        "st_zcr": zcr,
+        "st_energy_ps": energy_ps,
+        "st_centroid": centroids,
     }
+    for name, vals in quantities.items():
+        out[f"{name}_mean"] = float(np.mean(vals))
+        out[f"{name}_std"] = float(np.std(vals))
+        out[f"{name}_med"] = float(np.median(vals))
+        q75, q25 = float(np.percentile(vals, 75)), float(np.percentile(vals, 25))
+        out[f"{name}_iqr"] = q75 - q25
+        # Slope (OLS of values vs frame index)
+        n_f = len(vals)
+        if n_f >= 2:
+            x = np.arange(n_f, dtype=np.float64)
+            xm = x.mean()
+            denom = float(np.sum((x - xm) ** 2))
+            out[f"{name}_slope"] = (
+                float(np.sum((x - xm) * (vals - vals.mean())) / denom) if denom > 0 else 0.0
+            )
+        else:
+            out[f"{name}_slope"] = 0.0
+        out[f"{name}_rng"] = float(np.max(vals) - np.min(vals))
+
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -303,10 +420,17 @@ def compute_dwt_features(
         coeffs = pywt.wavedec(y, wavelet, level=actual_level)
 
     out: dict[str, float] = {}
+    # First pass: collect all energies for ratio computation
+    energies = [float(np.sum(c**2)) for c in coeffs]
+    total_energy = sum(energies) + 1e-18
+
     for lvl, c in enumerate(coeffs, start=1):
         prefix = f"dwt_l{lvl}"
+        energy = energies[lvl - 1]
         out[f"{prefix}_rms"] = float(np.sqrt(np.mean(c**2)))
-        out[f"{prefix}_energy"] = float(np.sum(c**2))
+        out[f"{prefix}_energy"] = energy
+        out[f"{prefix}_energy_normed"] = energy / len(c)
+        out[f"{prefix}_energy_ratio"] = energy / total_energy
         out[f"{prefix}_median"] = float(np.median(c))
         out[f"{prefix}_std"] = float(np.std(c))
     return out

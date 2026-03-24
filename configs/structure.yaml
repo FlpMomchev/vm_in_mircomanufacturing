@@ -13,8 +13,8 @@ modality: "structure"
 native_sr: 3125000
 
 # Downsample rate (factor, applied via scipy.signal.decimate)
-# Result: 3_125_000 / 1000 = 3125 Hz
-ds_rate: 1000
+# Result: 3_125_000 / 62.5 = 50 kHz
+ds_rate: 62.5
 
 # HDF5 dataset keys (from measurement hardware)
 h5_data_key:  "measurement/data"

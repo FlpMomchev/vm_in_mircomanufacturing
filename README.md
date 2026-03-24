@@ -29,8 +29,9 @@ vm_in_micromanufacturing/
 │   ├── features/
 │   │   ├── core.py             # All feature families (time, freq, DWT, CWT …)
 │   │   ├── airborne.py         # Airborne extraction pipeline (192 kHz FLAC)
-│   │   ├── structure.py        # Structure-borne pipeline (HDF5, with decimation)
-│   │   └── selection.py        # Inverted-cone feature selection
+│   │   ├── structure.py        # Structure-borne pipeline (HDF5, v1 + extensive routing)
+│   │   ├── structure_extensive.py  # Windowed extractor (48.8 kHz, WPD, MFCC, complexity)
+│   │   └── selection.py        # Inverted-cone feature selection (+ partial-r filter)
 │   ├── classical/
 │   │   ├── trainer.py          # Grouped CV training (RF, XGB, LGB, CatBoost, GPR …)
 │   │   └── inference.py        # Bundle-based inference
@@ -54,8 +55,8 @@ vm_in_micromanufacturing/
 ├── scripts/                    # CLI entry points (installed as `vm-*` commands)
 │   ├── split_audio.py          # vm-split
 │   ├── extract_airborne.py     # vm-extract-air
-│   ├── extract_structure.py    # vm-extract-struct
-│   ├── select_features.py      # vm-select
+│   ├── extract_structure.py    # vm-extract-struct (--extractor v1|extensive)
+│   ├── select_features.py      # vm-select (--min-partial-r for duration filtering)
 │   ├── train_classical.py      # vm-train-cls
 │   ├── train_dl.py             # vm-train-dl
 │   ├── infer.py                # vm-infer
@@ -67,12 +68,14 @@ vm_in_micromanufacturing/
 │   └── RESULTS.md              # Full breakdown with all plots
 │
 ├── notebooks/
-│   ├── air_influence_exploration/   # Legacy milling notebooks (01-04)
-│   └── analysis/                    # side_effect_control, holdout_reliability …
+│   ├── air_influence_exploration/       # Legacy milling notebooks (01-04)
+│   ├── analysis/                        # side_effect_control, holdout_reliability …
+│   ├── feature_extraction_validation.ipynb   # Per-modality feature QA
+│   └── duration_dependency_diagnostic.ipynb  # Cross-modality duration confound analysis
 │
 ├── tests/
 │   ├── test_data_io.py         # I/O, manifest helpers, segmentation
-│   ├── test_features.py        # Feature extraction correctness + edge cases
+│   ├── test_features.py        # Feature extraction correctness + new families
 │   ├── test_classical.py       # Classical ML training + inference round-trip
 │   └── test_fusion.py          # Fusion layer interface + uncertainty propagation
 │
@@ -171,7 +174,7 @@ pytest -v        # all tests, verbose
 pytest --co      # list collected tests without running
 ```
 
-**42 / 42 tests pass on a clean install** — 100 % pass rate.
+**52 / 52 tests pass on a clean install** — 100 % pass rate.
 
 The suite covers data I/O and segmentation (FLAC + HDF5 fixtures, full
 detect → segment → pad → export cycle), all feature extraction families
@@ -216,28 +219,43 @@ vm-extract-air \
     --config       configs/airborne.yaml \
     --out-csv      outputs/features/airborne/features.csv
 
-# Structure-borne
+# Structure-borne (default v1 extractor)
 vm-extract-struct \
     --segments-dir all_outputs/structure \
     --config       configs/structure.yaml \
     --out-csv      outputs/structure/features.csv
+
+# Structure-borne (extensive extractor — windowed, higher SR, WPD/MFCC)
+vm-extract-struct \
+    --segments-dir all_outputs/structure \
+    --config       configs/structure.yaml \
+    --out-csv      outputs/structure/features_extensive.csv \
+    --extractor    extensive
 ```
 
 ### 3 · Select features
 
 ```bash
+# Standard selection
 vm-select \
     --features-csv outputs/features/airborne/features.csv \
     --out-csv      outputs/features/airborne/features_selected.csv \
     --final-n      15
+
+# With duration-proxy filtering (genuine depth signal only)
+vm-select \
+    --features-csv <features_csv> \
+    --out-csv      <output_csv> \
+    --final-n      15 \
+    --min-partial-r 0.15
 ```
 
 ### 4 · Train classical models
 
 ```bash
 vm-train-cls \
-    --features-csv outputs/features/airborne/features_selected.csv \
-    --out-dir      outputs/features/airborne \
+    --features-csv <features_selected_csv> \
+    --out-dir      <output_dir> \
     --holdout-runs <run_id_1> <run_id_2>
 ```
 
@@ -263,14 +281,14 @@ vm-train-dl \
 
 ```bash
 vm-infer classical \
-    --bundle   outputs/features/airborne/final_model/best_model_bundle.joblib \
-    --features outputs/features/airborne/features_selected.csv \
-    --out-csv  outputs/features/airborne/inference_predictions.csv
+    --bundle   <model_bundle_path> \
+    --features <features_selected_csv> \
+    --out-csv  <output_predictions_csv>
 
 vm-infer dl \
-    --model-dir outputs/dl/hybrid_cls \
-    --data-dir  unseen \
-    --out-csv   outputs/dl/hybrid_cls/inference_predictions.csv
+    --model-dir <dl_model_dir> \
+    --data-dir  <data_dir> \
+    --out-csv   <output_predictions_csv>
 ```
 
 ### 7 · Fuse predictions
@@ -278,9 +296,9 @@ vm-infer dl \
 ```bash
 # Stage 1: airborne classical + DL
 vm-fuse intra \
-    --classical-csv outputs/features/airborne/inference_predictions.csv \
+    --classical-csv <classical_predictions_csv> \
     --classical-mae <value> \
-    --dl-csv        outputs/dl/hybrid_cls/inference_predictions.csv \
+    --dl-csv        <dl_predictions_csv> \
     --dl-mae        <value> \
     --modality      airborne_ensemble \
     --out-dir       outputs/fusion/airborne
@@ -288,8 +306,8 @@ vm-fuse intra \
 # Stage 2: airborne + structure-borne (once structure-borne is trained)
 vm-fuse inter \
     --bundle-csvs \
-        outputs/fusion/airborne/fusion_predictions.csv:<mae>:airborne_ensemble \
-        outputs/fusion/structure/fusion_predictions.csv:<mae>:structure_ensemble \
+        <airborne_fusion_csv>:<mae>:airborne_ensemble \
+        <structure_fusion_csv>:<mae>:structure_ensemble \
     --out-dir outputs/fusion/final
 ```
 
@@ -302,7 +320,7 @@ raw_data/
   airborne/
     normalBand/    *.flac
     largerBand/    *.flac
-  structure_borne/ *.h5     (future)
+  structure_borne/ *.h5
   Versuchsplan__Bohrungen.xlsx
 
 all_outputs/       per-run subfolders, each containing segmented files:
@@ -333,7 +351,13 @@ airborne FLAC segments
             ↓                            ↓
        vm-fuse intra  →  airborne_ensemble  (w_cls, w_dl from inverse-MAE)
                                 ↓
-structure HDF5 segments  →  structure_ensemble  (future, same pipeline)
+structure HDF5 segments
+  ├── vm-extract-struct (--extractor v1|extensive)  → features.csv
+  │     └── vm-select (--min-partial-r 0.15) → features_selected.csv
+  │           └── vm-train-cls → structure_classical bundle
+  └── vm-train-dl → structure_DL bundle
+            ↓                            ↓
+       vm-fuse intra  →  structure_ensemble
                                 ↓
                      vm-fuse inter  →  final prediction + σ_total
 ```
@@ -354,6 +378,8 @@ any training or extraction code.
 | Add a new DL architecture | `vm_micro/dl/models.py` + register in `frontends.py` |
 | Change fusion strategy | `vm_micro/fusion/fuser.py` → `_fuse()` |
 | Add a new batch preset | `scripts/split_audio.py` → `BATCH_PRESETS` |
+| Switch structure extractor | `configs/structure.yaml` → set `extractor: extensive` or use `--extractor extensive` |
+| Filter duration proxies | `vm-select --min-partial-r 0.15` or set `min_partial_r` in `SelectionConfig` |
 
 ---
 
