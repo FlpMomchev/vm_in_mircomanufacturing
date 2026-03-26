@@ -148,20 +148,6 @@ This is the only protocol that reflects real deployment.
 
 Holdout: 7 complete plate runs, 343 holes, excluded from all phases.
 
-### Deep Learning — SpecResNet regression
-
-| Metric | Value |
-|--------|-------|
-| MAE | **0.002 mm** |
-| RMSE | 0.002 mm |
-| R² | 0.9999 |
-| Step accuracy (±0.05 mm) | 100 % |
-
-Holdout: 2 complete plate runs, 98 holes, never seen in any training phase.
-
-The DOE step size is 0.1 mm. Classical MAE = **32 %** of one step.
-DL MAE on unseen runs = **2 %** of one step.
-
 > Structure-borne and fused results will be added as soon as those pipelines are
 > completed.
 
