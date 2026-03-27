@@ -1,4 +1,4 @@
-"""Tests for vm_micro.fusion — PredictionBundle, fuse_intra_modality, fuse_modalities."""
+"""Tests for vm_micro.fusion  PredictionBundle, fuse_intra_modality, fuse_modalities."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from vm_micro.fusion.fuser import (
     save_fusion_report,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Fixtures
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 _RECORDS = np.array([f"run01__seg{i:03d}" for i in range(20)])
 _DEPTHS = np.linspace(0.1, 1.0, 20)
@@ -43,9 +43,9 @@ def _make_bundle(
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # PredictionBundle
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_bundle_shapes():
@@ -63,9 +63,9 @@ def test_bundle_to_dataframe():
     assert len(df) == len(_RECORDS)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # fuse_intra_modality
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_intra_fusion_output_shape():
@@ -79,7 +79,7 @@ def test_intra_fusion_output_shape():
 
 
 def test_intra_fusion_better_model_gets_higher_weight():
-    """The DL model has lower MAE → higher weight → fused prediction closer to DL."""
+    """The DL model has lower MAE  higher weight  fused prediction closer to DL."""
     cls_b = _make_bundle("cls", val_mae=0.200, noise=0.0)
     dl_b = _make_bundle("dl", val_mae=0.050, noise=0.0)
 
@@ -96,14 +96,14 @@ def test_intra_fusion_sigma_propagation():
     cls_b = _make_bundle("cls", val_mae=0.060)
     dl_b = _make_bundle("dl", val_mae=0.040)
     fused = fuse_intra_modality(cls_b, dl_b, "ensemble")
-    # σ_fused = sqrt((w1*σ1)² + (w2*σ2)²) — must be positive
+    # _fused = sqrt((w1*1) + (w2*2))  must be positive
     assert np.all(fused.sigma >= 0)
     assert np.all(np.isfinite(fused.sigma))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # fuse_modalities (inter)
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_inter_fusion_two_modalities():
@@ -123,9 +123,9 @@ def test_single_modality_passthrough():
     np.testing.assert_array_equal(final.y_pred, b.y_pred)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Record alignment
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_fusion_aligns_records_to_intersection():
@@ -136,13 +136,13 @@ def test_fusion_aligns_records_to_intersection():
     b_b = PredictionBundle("B", records_b, np.ones(10), np.ones(10) * 0.05, 0.05)
 
     fused = fuse_intra_modality(b_a, b_b, "ensemble")
-    # intersection = seg005..seg009 → 5 records
+    # intersection = seg005..seg009  5 records
     assert len(fused.y_pred) == 5
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Persistence
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_save_and_reload_report(tmp_path: Path):

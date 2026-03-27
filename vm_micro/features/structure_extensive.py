@@ -1,25 +1,25 @@
 """
 StructureBorneFeatureExtractorExtensive
-================================
-Redesigned feature extraction for structure-borne acoustic signals
+=======================================
+Separate class with redesigned feature extraction for structure-borne acoustic signals
 in micro-drilling depth prediction.
 
 Key improvements over V1:
-  1. Fixed-window analysis (50 ms, 50 % overlap) → features decoupled from
-     segment duration (eliminates the duration↔depth confound).
-  2. Higher effective sample rate (~48.8 kHz via cascade decimation 8×8)
-     → access to cutting-dynamics bands up to ~24 kHz.
+  1. Fixed-window analysis (50 ms, 50 % overlap)  features decoupled from
+     segment duration (eliminates the durationdepth confound).
+  2. Higher effective sample rate (~48.8 kHz via cascade decimation 88)
+      access to cutting-dynamics bands up to ~24 kHz.
   3. Normalised / intensive features (ratios, spectral shapes, slopes)
      instead of extensive quantities that scale with signal length.
   4. WPD sub-band energy ratios (uniform frequency resolution, replacing DWT).
   5. Cepstral features with log-spaced filterbank (MFCC-like, adapted for
      vibration rather than speech).
-  6. Spectral-shape descriptors (slope, contrast, decrease, bandwidth …).
+  6. Spectral-shape descriptors (slope, contrast, decrease, bandwidth ).
   7. CWT scale energy fractions (kept for comparability with airborne pipeline).
   8. Complexity measures (sample entropy, permutation entropy, Lempel-Ziv).
 
 The returned dict contains *only* scalar feature values; meta-columns
-(modality, record_name, depth_mm, …) must be added by the calling pipeline,
+(modality, record_name, depth_mm, ) must be added by the calling pipeline,
 exactly as in the existing CSV schema.
 """
 
@@ -32,12 +32,13 @@ import numpy as np
 import pywt
 from scipy.fft import rfft, rfftfreq
 from scipy.signal import decimate
+from scipy.signal import stft as _stft
 from scipy.stats import kurtosis as sp_kurtosis
 from scipy.stats import skew as sp_skew
 
-# ──────────────────────────────────────────────────────────────────────
+#
 # Main class
-# ──────────────────────────────────────────────────────────────────────
+#
 
 
 class StructureBorneFeatureExtractorExtensive:
@@ -50,7 +51,7 @@ class StructureBorneFeatureExtractorExtensive:
     fs_native : int
         Native sampling rate of the raw signal (Hz).
     ds_stages : list[int]
-        Cascade decimation factors.  Default [8, 8] → effective SR ≈ 48 828 Hz.
+        Cascade decimation factors.  Default [8, 8]  effective SR  48 828 Hz.
     window_s : float
         Analysis window length in seconds (default 0.050 = 50 ms).
     hop_s : float
@@ -58,7 +59,7 @@ class StructureBorneFeatureExtractorExtensive:
     wpd_wavelet : str
         Wavelet for WPD (default 'db4').
     wpd_level : int
-        WPD decomposition depth (default 5 → 32 sub-bands).
+        WPD decomposition depth (default 5  32 sub-bands).
     n_mfcc : int
         Number of cepstral coefficients to retain (default 13).
     n_filters : int
@@ -79,7 +80,7 @@ class StructureBorneFeatureExtractorExtensive:
         Permutation-entropy parameters.
     """
 
-    # ── defaults ──────────────────────────────────────────────────────
+    #  defaults
     _DEFAULTS = dict(
         ds_stages=[8, 8],
         window_s=0.050,
@@ -114,7 +115,7 @@ class StructureBorneFeatureExtractorExtensive:
     # Aggregation statistics applied to every per-window feature
     _AGG_NAMES = ("mean", "std", "med", "iqr", "slope", "rng")
 
-    # ── construction ──────────────────────────────────────────────────
+    #  construction
     def __init__(self, fs_native: int, **kwargs):
         self.fs_native = int(fs_native)
         self.cfg = {**self._DEFAULTS, **kwargs}
@@ -135,38 +136,23 @@ class StructureBorneFeatureExtractorExtensive:
         # Pre-compute CWT scales (log-spaced from f_min to Nyquist)
         self._cwt_scales = self._build_cwt_scales()
 
-    # ── public API ────────────────────────────────────────────────────
+    #  public API
     @property
     def ds_rate(self) -> int:
-        """Total decimation factor applied to the raw signal."""
         return self._ds_total
 
     @property
     def sr_hz_used(self) -> int:
-        """Effective sample rate after decimation."""
         return self.fs
 
     def extract(self, raw_data: np.ndarray) -> OrderedDict:
-        """
-        Extract all features from one raw segment.
-
-        Parameters
-        ----------
-        raw_data : 1-D array
-            Raw signal at ``fs_native`` Hz.
-
-        Returns
-        -------
-        OrderedDict[str, float]
-            Flat mapping  feature_name → scalar value.
-        """
         signal = self._decimate(raw_data)
         windows = self._make_windows(signal)
 
         if len(windows) < 3:
             return self._empty_result()
 
-        # ── 1. per-window feature vectors ─────────────────────────────
+        #  1. per-window feature vectors
         pw_keys: list[str] | None = None
         pw_matrix: list[list[float]] = []
         mfcc_matrix: list[np.ndarray] = []  # (n_windows, n_mfcc) for deltas
@@ -187,39 +173,36 @@ class StructureBorneFeatureExtractorExtensive:
         pw_arr = np.array(pw_matrix, dtype=np.float64)  # (n_win, n_feat)
         mfcc_arr = np.array(mfcc_matrix, dtype=np.float64)  # (n_win, n_mfcc)
 
-        # ── 2. aggregate per-window features ──────────────────────────
+        #  2. aggregate per-window features
         result = self._aggregate(pw_keys, pw_arr)
 
-        # ── 3. cepstral deltas (computed across the window axis) ──────
+        #  3. cepstral deltas (computed across the window axis)
         result.update(self._cepstral_deltas(mfcc_arr))
 
-        # ── 4. CWT global features ───────────────────────────────────
+        #  4. CWT global features
         result.update(self._cwt_features(signal))
 
-        # ── 5. complexity on fixed-length excerpt ─────────────────────
+        #  5. STFT time-frequency dynamics
+        result.update(self._timefrequency(signal))
+
+        #  6. complexity on fixed-length excerpt
         result.update(self._complexity(signal))
 
         return result
 
     def feature_names(self, n_windows: int = 10) -> list[str]:
-        """
-        Return an ordered list of all feature names that ``extract``
-        would produce, using *n_windows* as a dummy count.
-        Useful for pre-allocating DataFrames.
-        """
         dummy = np.random.randn(self.win_len * n_windows).astype(np.float32)
         return list(self.extract(dummy).keys())
 
-    # ── decimation ────────────────────────────────────────────────────
+    #  decimation
     def _decimate(self, raw: np.ndarray) -> np.ndarray:
         sig = raw.astype(np.float64).ravel()
         for factor in self.cfg["ds_stages"]:
             sig = decimate(sig, factor, ftype="iir", zero_phase=True)
         return sig
 
-    # ── windowing ─────────────────────────────────────────────────────
+    #  windowing
     def _make_windows(self, signal: np.ndarray) -> list[np.ndarray]:
-        """Slice signal into fixed-length overlapping windows."""
         wins = []
         start = 0
         while start + self.win_len <= len(signal):
@@ -227,11 +210,11 @@ class StructureBorneFeatureExtractorExtensive:
             start += self.hop_len
         return wins
 
-    # ──────────────────────────────────────────────────────────────────
+    #
     # PER-WINDOW FEATURE FAMILIES
-    # ──────────────────────────────────────────────────────────────────
+    #
 
-    # ── A. time-domain ────────────────────────────────────────────────
+    #  A. time-domain
     @staticmethod
     def _time_domain(win: np.ndarray) -> OrderedDict:
         eps = 1e-15
@@ -267,7 +250,7 @@ class StructureBorneFeatureExtractorExtensive:
             td_hjorth_cmp=complexity,
         )
 
-    # ── B. spectral shape ─────────────────────────────────────────────
+    #  B. spectral shape
     def _spectral_shape(self, win: np.ndarray) -> OrderedDict:
         eps = 1e-15
         N = len(win)
@@ -280,38 +263,38 @@ class StructureBorneFeatureExtractorExtensive:
         ps = spec**2
         ps_sum = ps.sum() + eps
 
-        # — centroid
+        #  centroid
         centroid = np.sum(freqs * ps) / ps_sum
-        # — spread
+        #  spread
         spread = np.sqrt(np.sum(((freqs - centroid) ** 2) * ps) / ps_sum)
-        # — rolloff (95 %)
+        #  rolloff (95 %)
         cumsum = np.cumsum(ps)
         rolloff_idx = np.searchsorted(cumsum, 0.95 * cumsum[-1])
         rolloff = freqs[min(rolloff_idx, len(freqs) - 1)]
-        # — flatness (geometric mean / arithmetic mean of PS)
+        #  flatness (geometric mean / arithmetic mean of PS)
         log_ps = np.log(ps + eps)
         flatness = np.exp(log_ps.mean()) / (ps.mean() + eps)
-        # — spectral slope (linear regression of log-PS vs freq)
+        #  spectral slope (linear regression of log-PS vs freq)
         slope_coef = self._ols_slope(freqs, log_ps)
-        # — spectral decrease
+        #  spectral decrease
         if len(ps) > 1:
             decrease = np.sum((ps[1:] - ps[0]) / (np.arange(1, len(ps)) + eps)) / (
                 ps_sum - ps[0] + eps
             )
         else:
             decrease = 0.0
-        # — spectral skewness & kurtosis
+        #  spectral skewness & kurtosis
         normed = (freqs - centroid) / (spread + eps)
         ss_skew = np.sum((normed**3) * ps) / ps_sum
         ss_kurt = np.sum((normed**4) * ps) / ps_sum
-        # — spectral entropy
+        #  spectral entropy
         p_norm = ps / ps_sum
         entropy = -np.sum(p_norm * np.log2(p_norm + eps))
-        # — bandwidth at –3 dB & –10 dB
+        #  bandwidth at 3 dB & 10 dB
         peak_val = ps.max()
         bw3 = self._bandwidth_at_level(freqs, ps, peak_val, -3)
         bw10 = self._bandwidth_at_level(freqs, ps, peak_val, -10)
-        # — peak frequency
+        #  peak frequency
         peak_freq = freqs[np.argmax(ps)]
 
         return OrderedDict(
@@ -329,7 +312,7 @@ class StructureBorneFeatureExtractorExtensive:
             ss_peak_freq=peak_freq,
         )
 
-    # ── C. band energy ratios ─────────────────────────────────────────
+    #  C. band energy ratios
     def _band_energy_ratios(self, win: np.ndarray) -> OrderedDict:
         eps = 1e-15
         N = len(win)
@@ -346,7 +329,7 @@ class StructureBorneFeatureExtractorExtensive:
             out[f"br_{i}"] = ratio
         return out
 
-    # ── D. WPD sub-band energy ratios ─────────────────────────────────
+    #  D. WPD sub-band energy ratios
     def _wpd_ratios(self, win: np.ndarray) -> OrderedDict:
         eps = 1e-15
         level = self.cfg["wpd_level"]
@@ -365,7 +348,7 @@ class StructureBorneFeatureExtractorExtensive:
 
         return OrderedDict((f"wpd_{j:02d}", ratios[j]) for j in range(len(ratios)))
 
-    # ── E. cepstral (MFCC-like, log-spaced filterbank) ───────────────
+    #  E. cepstral (MFCC-like, log-spaced filterbank)
     def _cepstral(self, win: np.ndarray) -> OrderedDict:
         n_mfcc = self.cfg["n_mfcc"]
         N = len(win)
@@ -373,7 +356,7 @@ class StructureBorneFeatureExtractorExtensive:
         spec = np.abs(rfft(w))
         ps = spec**2
 
-        # Apply filterbank  → (n_filters,)
+        # Apply filterbank   (n_filters,)
         fb_energies = self._fbank @ ps
         fb_energies = np.maximum(fb_energies, 1e-22)
         log_energies = np.log(fb_energies)
@@ -388,19 +371,11 @@ class StructureBorneFeatureExtractorExtensive:
 
         return OrderedDict((f"mfcc_{k:02d}", coeffs[k]) for k in range(n_mfcc))
 
-    # ──────────────────────────────────────────────────────────────────
+    #
     # AGGREGATION across windows
-    # ──────────────────────────────────────────────────────────────────
+    #
 
     def _aggregate(self, keys: list[str], arr: np.ndarray) -> OrderedDict:
-        """
-        Compute 6 summary statistics per feature across the window axis.
-
-        Parameters
-        ----------
-        keys : list[str]   – feature names (length F)
-        arr  : ndarray      – shape (W, F)
-        """
         result = OrderedDict()
         for j, name in enumerate(keys):
             col = arr[:, j]
@@ -415,15 +390,11 @@ class StructureBorneFeatureExtractorExtensive:
                 result[f"{name}_{stat}"] = val
         return result
 
-    # ──────────────────────────────────────────────────────────────────
+    #
     # CEPSTRAL DELTAS (across-window first & second derivatives)
-    # ──────────────────────────────────────────────────────────────────
+    #
 
     def _cepstral_deltas(self, mfcc_arr: np.ndarray) -> OrderedDict:
-        """
-        Compute Δ-MFCC and ΔΔ-MFCC from the (n_windows × n_mfcc) matrix,
-        then aggregate each with the standard 6 statistics.
-        """
         n_mfcc = mfcc_arr.shape[1]
         # delta: finite difference along window axis
         delta = np.diff(mfcc_arr, axis=0)
@@ -451,9 +422,9 @@ class StructureBorneFeatureExtractorExtensive:
 
         return result
 
-    # ──────────────────────────────────────────────────────────────────
+    #
     # CWT GLOBAL FEATURES  (on the full decimated segment)
-    # ──────────────────────────────────────────────────────────────────
+    #
 
     def _cwt_features(self, signal: np.ndarray) -> OrderedDict:
         eps = 1e-15
@@ -492,9 +463,70 @@ class StructureBorneFeatureExtractorExtensive:
 
         return out
 
-    # ──────────────────────────────────────────────────────────────────
+    #
+    # STFT-BASED TIME-FREQUENCY DYNAMICS  (on the full decimated segment)
+    #
+
+    def _timefrequency(self, signal: np.ndarray) -> OrderedDict:
+        eps = 1e-15
+        nperseg = min(2048, len(signal))
+        hop = nperseg // 4
+
+        freqs, times, Zxx = _stft(
+            signal,
+            fs=self.fs,
+            nperseg=nperseg,
+            noverlap=nperseg - hop,
+        )
+        mag = np.abs(Zxx)
+        pwr = mag**2
+
+        out = OrderedDict()
+
+        if pwr.shape[1] < 2:
+            out["tf_flux_mean"] = 0.0
+            out["tf_flux_std"] = 0.0
+            out["tf_flux_max"] = 0.0
+            out["tf_variation_mean"] = 0.0
+            out["tf_variation_median"] = 0.0
+            out["tf_temporal_centroid"] = 0.5
+            out["tf_dom_freq_mean"] = 0.0
+            out["tf_dom_freq_std"] = 0.0
+            out["tf_tonalness_mean"] = 0.0
+            return out
+
+        # Spectral flux
+        flux = np.sqrt(np.sum(np.diff(mag, axis=1) ** 2, axis=0))
+        out["tf_flux_mean"] = float(np.mean(flux))
+        out["tf_flux_std"] = float(np.std(flux))
+        out["tf_flux_max"] = float(np.max(flux))
+
+        # Spectral variation (CV per frequency bin across time)
+        sv = np.std(mag, axis=1) / (np.mean(mag, axis=1) + eps)
+        out["tf_variation_mean"] = float(np.mean(sv))
+        out["tf_variation_median"] = float(np.median(sv))
+
+        # Temporal centroid of total power
+        tp = np.sum(pwr, axis=0)
+        t_norm = np.linspace(0, 1, len(tp))
+        tp_norm = tp / (tp.sum() + eps)
+        out["tf_temporal_centroid"] = float(np.sum(t_norm * tp_norm))
+
+        # Dominant frequency tracking
+        dom_f = freqs[np.argmax(pwr, axis=0)]
+        out["tf_dom_freq_mean"] = float(np.mean(dom_f))
+        out["tf_dom_freq_std"] = float(np.std(dom_f))
+
+        # Tonalness (spectral flatness per frame, averaged)
+        gm = np.exp(np.mean(np.log(pwr + eps), axis=0))
+        am = np.mean(pwr + eps, axis=0)
+        out["tf_tonalness_mean"] = float(np.mean(1.0 - gm / (am + eps)))
+
+        return out
+
+    #
     # COMPLEXITY MEASURES  (on a fixed-length excerpt)
-    # ──────────────────────────────────────────────────────────────────
+    #
 
     def _complexity(self, signal: np.ndarray) -> OrderedDict:
         N = self.cfg["complexity_n_samples"]
@@ -511,7 +543,7 @@ class StructureBorneFeatureExtractorExtensive:
             cx_lzc=self._lempel_ziv(excerpt),
         )
 
-    # ── sample entropy ────────────────────────────────────────────────
+    #  sample entropy
     def _sample_entropy(self, x: np.ndarray) -> float:
         m = self.cfg["sampen_m"]
         r = self.cfg["sampen_r_factor"] * np.std(x)
@@ -534,7 +566,7 @@ class StructureBorneFeatureExtractorExtensive:
             return np.nan
         return -np.log(A / B)
 
-    # ── permutation entropy ───────────────────────────────────────────
+    #  permutation entropy
     def _permutation_entropy(self, x: np.ndarray) -> float:
         order = self.cfg["permen_order"]
         delay = self.cfg["permen_delay"]
@@ -554,9 +586,9 @@ class StructureBorneFeatureExtractorExtensive:
             return np.nan
         probs = np.array(list(counts.values()), dtype=np.float64) / total
         H = -np.sum(probs * np.log2(probs + 1e-15))
-        return H / log2(max_perms)  # normalised ∈ [0, 1]
+        return H / log2(max_perms)  # normalised  [0, 1]
 
-    # ── Lempel-Ziv complexity (LZ76, normalised) ─────────────────────
+    #  Lempel-Ziv complexity (LZ76, normalised)
     @staticmethod
     def _lempel_ziv(x: np.ndarray) -> float:
         binary = (x > np.median(x)).astype(np.int8)
@@ -580,12 +612,11 @@ class StructureBorneFeatureExtractorExtensive:
         norm = n / log2(n + 1) if n > 1 else 1.0
         return c / norm
 
-    # ──────────────────────────────────────────────────────────────────
+    #
     # HELPERS
-    # ──────────────────────────────────────────────────────────────────
+    #
 
     def _build_filterbank(self) -> np.ndarray:
-        """Log-spaced triangular filterbank for cepstral analysis."""
         n_filt = self.cfg["n_filters"]
         f_min = self.cfg["f_min_cepstral"]
         f_max = self.fs / 2.0
@@ -617,7 +648,6 @@ class StructureBorneFeatureExtractorExtensive:
         return fbank
 
     def _build_cwt_scales(self) -> np.ndarray:
-        """Log-spaced CWT scales from f_min to Nyquist."""
         n = self.cfg["cwt_n_scales"]
         f_min = self.cfg["cwt_f_min"]
         f_max = self.fs / 2.0
@@ -625,7 +655,7 @@ class StructureBorneFeatureExtractorExtensive:
 
         # Centre frequency of the mother wavelet
         cf = pywt.central_frequency(wavelet)
-        # scales = cf * fs / f  →  log-spaced f  →  log-spaced scales (reversed)
+        # scales = cf * fs / f    log-spaced f    log-spaced scales (reversed)
         freqs = np.logspace(np.log10(f_min), np.log10(f_max), n)
         scales = cf * self.fs / freqs
         return scales[::-1]  # ascending scale = descending frequency
@@ -644,7 +674,6 @@ class StructureBorneFeatureExtractorExtensive:
 
     @staticmethod
     def _ols_slope_idx(col: np.ndarray) -> float:
-        """OLS slope of col vs integer index (0, 1, 2, …)."""
         n = len(col)
         if n < 2:
             return 0.0
@@ -657,7 +686,6 @@ class StructureBorneFeatureExtractorExtensive:
 
     @staticmethod
     def _bandwidth_at_level(freqs: np.ndarray, ps: np.ndarray, peak_val: float, db: float) -> float:
-        """Width of the spectrum above *db* dB below the peak."""
         threshold = peak_val * 10 ** (db / 10.0)
         mask = ps >= threshold
         if not np.any(mask):
@@ -666,7 +694,6 @@ class StructureBorneFeatureExtractorExtensive:
         return float(freqs[idx[-1]] - freqs[idx[0]])
 
     def _empty_result(self) -> OrderedDict:
-        """Return NaN-filled dict when a segment is too short."""
         # Build a dummy to get the keys
         dummy_win = np.random.randn(self.win_len)
         row = OrderedDict()
@@ -693,6 +720,19 @@ class StructureBorneFeatureExtractorExtensive:
         result["cwt_energy_spread"] = np.nan
         result["cwt_global_mean"] = np.nan
         result["cwt_global_std"] = np.nan
+        # Timefrequency
+        for k in (
+            "tf_flux_mean",
+            "tf_flux_std",
+            "tf_flux_max",
+            "tf_variation_mean",
+            "tf_variation_median",
+            "tf_temporal_centroid",
+            "tf_dom_freq_mean",
+            "tf_dom_freq_std",
+            "tf_tonalness_mean",
+        ):
+            result[k] = np.nan
         # Complexity
         result["cx_sampen"] = np.nan
         result["cx_permen"] = np.nan
@@ -700,9 +740,9 @@ class StructureBorneFeatureExtractorExtensive:
         return result
 
 
-# ──────────────────────────────────────────────────────────────────────
+#
 # Quick self-test
-# ──────────────────────────────────────────────────────────────────────
+#
 if __name__ == "__main__":
     import time
 
@@ -710,7 +750,7 @@ if __name__ == "__main__":
     DURATION = 2.0  # seconds
     n_samples = int(FS_NATIVE * DURATION)
 
-    print(f"Generating {DURATION}s synthetic signal at {FS_NATIVE / 1e6:.3f} MHz …")
+    print(f"Generating {DURATION}s synthetic signal at {FS_NATIVE / 1e6:.3f} MHz ")
     rng = np.random.default_rng(42)
     sig = rng.standard_normal(n_samples).astype(np.float32)
     # Add some tone structure

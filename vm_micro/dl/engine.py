@@ -119,6 +119,7 @@ def predict_loader(model, loader, device: str, cfg: TrainConfig) -> pd.DataFrame
     rows = []
 
     for batch in loader:
+        paths = batch["path"]
         batch = move_batch(batch, device)
         output = model(batch["waveform"])
 
@@ -154,6 +155,17 @@ def predict_loader(model, loader, device: str, cfg: TrainConfig) -> pd.DataFrame
             y_true = batch["depth_mm"].cpu().numpy()
             start_samples = batch["window_start_target"].cpu().numpy()
 
+            pred = np.asarray(pred, dtype=np.float32).reshape(-1)
+
+            if not np.isfinite(pred).all():
+                bad = ~np.isfinite(pred)
+                raise ValueError(
+                    "Non-finite regression predictions detected. "
+                    f"file_ids={file_ids[bad].tolist()} "
+                    f"paths={[paths[i] for i in np.where(bad)[0]]} "
+                    f"window_starts={start_samples[bad].tolist()}"
+                )
+
             for i in range(len(file_ids)):
                 row = {
                     "file_id": int(file_ids[i]),
@@ -175,17 +187,17 @@ def aggregate_file_predictions(
     cfg: TrainConfig,
     class_to_depth: dict[int, float] | None = None,
 ) -> pd.DataFrame:
-    join_cols = [
+    base_join_cols = [
         "file_id",
-        "name",
+        "record_name",
         "split_group_id",
         "split",
         "depth_mm",
         "recording_root",
         "parent_dir",
+        "step_idx",
     ]
-    if "step_idx" in file_df.columns:
-        join_cols.append("step_idx")
+    join_cols = [col for col in base_join_cols if col in file_df.columns]
 
     if cfg.task == "classification":
         prob_cols = [col for col in pred_df.columns if col.startswith("p_")]
@@ -193,7 +205,7 @@ def aggregate_file_predictions(
         agg["y_pred_class"] = agg[prob_cols].to_numpy().argmax(axis=1)
         if class_to_depth is None:
             raise ValueError("Classification aggregation requires class_to_depth.")
-        agg["y_pred_depth"] = agg["y_pred_class"].map(class_to_depth)
+        agg["y_pred"] = agg["y_pred_class"].map(class_to_depth)
 
         truth = pred_df.groupby("file_id")[["y_true_class", "y_true_depth"]].first().reset_index()
         agg = agg.merge(truth, on="file_id", how="left")
@@ -208,7 +220,7 @@ def aggregate_file_predictions(
         pred_df.groupby("file_id")["y_pred_depth_window"]
         .median()
         .reset_index()
-        .rename(columns={"y_pred_depth_window": "y_pred_depth"})
+        .rename(columns={"y_pred_depth_window": "y_pred"})
     )
     truth = pred_df.groupby("file_id")[["y_true_depth"]].first().reset_index()
     agg = agg.merge(truth, on="file_id", how="left")
@@ -235,16 +247,16 @@ def evaluate_file_level(file_pred_df: pd.DataFrame, cfg: TrainConfig) -> dict[st
 
     metrics = regression_metrics(
         file_pred_df["y_true_depth"].to_numpy(),
-        file_pred_df["y_pred_depth"].to_numpy(),
+        file_pred_df["y_pred"].to_numpy(),
     )
     if cfg.rounding_step_mm is not None:
         metrics["rounded_step_accuracy"] = float(
             np.mean(
                 round_to_step(file_pred_df["y_true_depth"].to_numpy(), cfg.rounding_step_mm)
-                == round_to_step(file_pred_df["y_pred_depth"].to_numpy(), cfg.rounding_step_mm)
+                == round_to_step(file_pred_df["y_pred"].to_numpy(), cfg.rounding_step_mm)
             )
         )
     metrics["mean_signed_error"] = float(
-        np.mean(file_pred_df["y_pred_depth"].to_numpy() - file_pred_df["y_true_depth"].to_numpy())
+        np.mean(file_pred_df["y_pred"].to_numpy() - file_pred_df["y_true_depth"].to_numpy())
     )
     return metrics

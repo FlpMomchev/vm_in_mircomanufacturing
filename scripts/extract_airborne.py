@@ -1,12 +1,11 @@
-"""vm-extract-air — Extract features from segmented airborne FLAC files.
+"""vm-extract-air  Extract features from segmented airborne FLAC files.
 
 Usage::
 
-    vm-extract-air \\
-        --segments-dir all_outputs \\
-        --config       configs/airborne.yaml \\
-        --out-csv      outputs/features/airborne/features.csv \\
-        --workers      4
+    vm-extract-air `
+        --segments-dir data/raw_data_extracted_splits/air/live `
+        --config       configs/airborne.yaml `
+        --out-csv      data/features/airborne/features.csv
 """
 
 from __future__ import annotations
@@ -37,12 +36,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--out-csv",
         default=None,
-        help="Output CSV path.  Defaults to outputs/features/airborne/features.csv.",
+        help="Output CSV path.  Defaults to data/features/airborne/features.csv.",
     )
     p.add_argument(
-        "--file-glob", default="**/*.flac", help="Glob pattern for audio files under segments-dir."
+        "--file-glob",
+        default=None,
+        help="Glob pattern override. Defaults to config file_glob (fallback: **/*.flac).",
     )
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Worker-count override. Defaults to config n_workers.",
+    )
     p.add_argument("override", nargs="*", help="YAML config overrides, e.g. --dwt_wavelet=db4")
     return p
 
@@ -53,7 +59,7 @@ def main() -> None:
     if args.override:
         cfg = apply_overrides(cfg, args.override)
 
-    out_csv = args.out_csv or "outputs/features/airborne/features.csv"
+    out_csv = args.out_csv or "data/features/airborne/features.csv"
 
     df = extract_airborne(
         segments_dir=args.segments_dir,
@@ -62,7 +68,7 @@ def main() -> None:
         file_glob=args.file_glob,
         n_workers=args.workers,
     )
-    print(f"Extracted {len(df)} rows × {len(df.columns)} columns → {out_csv}")
+    print(f"Extracted {len(df)} rows  {len(df.columns)} columns  {out_csv}")
 
 
 if __name__ == "__main__":

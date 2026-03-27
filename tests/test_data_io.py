@@ -1,4 +1,4 @@
-"""Tests for vm_micro.data — signal I/O and segmentation."""
+"""Tests for vm_micro.data  signal I/O and segmentation."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pandas as pd
 import pytest
 import soundfile as sf
 
@@ -17,11 +18,16 @@ from vm_micro.data.manifest import (
     try_parse_depth_mm,
     try_parse_step_idx,
 )
-from vm_micro.data.splitter import apply_padding, band_envelope_db, detect_segments
+from vm_micro.data.splitter import (
+    apply_padding,
+    band_envelope_db,
+    detect_segments,
+    process_one_file,
+)
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Fixtures
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 SR = 48_000  # synthetic test sample rate
 
@@ -61,9 +67,9 @@ def synthetic_h5(tmp_path: Path) -> Path:
     return p
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # get_input_kind
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_get_input_kind_audio():
@@ -81,9 +87,9 @@ def test_get_input_kind_unknown():
         get_input_kind("file.mp3")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # read_audio_mono
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_read_audio_mono(synthetic_recording: Path):
@@ -100,9 +106,9 @@ def test_read_audio_mono_resamples(synthetic_recording: Path):
     assert len(y) > 0
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # read_measurement_h5
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_read_measurement_h5(synthetic_h5: Path):
@@ -114,9 +120,9 @@ def test_read_measurement_h5(synthetic_h5: Path):
     assert "dt_median_s" in meta
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# read_signal_auto — format dispatch
-# ─────────────────────────────────────────────────────────────────────────────
+#
+# read_signal_auto  format dispatch
+#
 
 
 def test_read_signal_auto_flac(synthetic_recording: Path):
@@ -133,9 +139,9 @@ def test_read_signal_auto_h5(synthetic_h5: Path):
     assert sig["y"].ndim == 1
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Manifest helpers
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_parse_depth_mm():
@@ -167,9 +173,9 @@ def test_build_segment_filename():
     assert "depth0.500" in fn
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Segmentation
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def test_band_envelope_db(synthetic_recording: Path):
@@ -187,6 +193,31 @@ def test_detect_segments_returns_three_bursts(synthetic_recording: Path):
     for a, b in segs:
         assert b > a
         assert a >= 0.0
+
+
+def test_process_one_file_uses_band_fallback(tmp_path: Path, synthetic_recording: Path):
+    doe_df = pd.DataFrame(
+        {
+            "Step": [1, 2, 3],
+            "HoleID": ["NA", "NA", "NA"],
+            "Depth_mm": [None, None, None],
+        }
+    )
+    manifest_df, summary = process_one_file(
+        audio_path=synthetic_recording,
+        doe_df=doe_df,
+        out_root=tmp_path / "segments",
+        expected_segments=3,
+        band_hz=(50.0, 60.0),
+        band_hz_fallbacks=[(2000.0, 5000.0)],
+        export_format="flac",
+    )
+
+    assert not manifest_df.empty
+    assert summary["band_hz_requested"] == (50.0, 60.0)
+    assert summary["band_hz_used"] == (2000.0, 5000.0)
+    assert summary["band_attempt_index_used"] == 2
+    assert summary["band_match_found"] is True
 
 
 def test_apply_padding_clips_to_bounds():

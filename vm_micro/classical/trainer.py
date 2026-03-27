@@ -2,9 +2,6 @@
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Grouped holdout + nested grouped CV classical ML trainer.
 
-This module mirrors the stable search / selection logic used in the newer
-standalone trainer while keeping the package-facing API for ``vm-train-cls``.
-
 Highlights
 ----------
 - grouped train / holdout split by ``recording_root``
@@ -111,11 +108,7 @@ AVAILABLE_MODEL_NAMES: tuple[str, ...] = (
     "catboost",
     "gaussian_process",
 )
-SEARCH_KIND_BY_PRESET: dict[str, str] = {
-    "fast": "grid",
-    "balanced": "grid",
-    "exhaustive": "random",
-}
+SEARCH_KIND_BY_PRESET: dict[str, str] = {"fast": "grid", "balanced": "grid", "exhaustive": "random"}
 
 PARAM_GRID_CONFIGS: dict[str, dict[str, list[Any]]] = {
     "fast": {
@@ -270,11 +263,7 @@ def _snap_to_grid(y_pred: np.ndarray, step: float) -> np.ndarray:
 
 
 def make_model_specs(
-    *,
-    preset: str,
-    random_state: int,
-    use_cuda: bool = False,
-    include_gpr: bool = False,
+    *, preset: str, random_state: int, use_cuda: bool = False, include_gpr: bool = False
 ) -> dict[str, dict[str, Any]]:
     cfg = PARAM_GRID_CONFIGS[_normalise_preset(preset)]
 
@@ -305,10 +294,7 @@ def make_model_specs(
                     ("model", ElasticNet(max_iter=50_000, random_state=random_state)),
                 ]
             ),
-            "param_grid": {
-                "model__alpha": cfg["en_alpha"],
-                "model__l1_ratio": cfg["en_l1"],
-            },
+            "param_grid": {"model__alpha": cfg["en_alpha"], "model__l1_ratio": cfg["en_l1"]},
         },
         "svr": {
             "pipeline": Pipeline(
@@ -386,8 +372,7 @@ def make_model_specs(
                     (
                         "model",
                         HistGradientBoostingRegressor(
-                            random_state=random_state,
-                            loss="absolute_error",
+                            random_state=random_state, loss="absolute_error"
                         ),
                     ),
                 ]
@@ -495,10 +480,7 @@ def make_model_specs(
                     (
                         "model",
                         GaussianProcessRegressor(
-                            kernel=gpr_kernel,
-                            alpha=1e-6,
-                            normalize_y=True,
-                            n_restarts_optimizer=0,
+                            kernel=gpr_kernel, alpha=1e-6, normalize_y=True, n_restarts_optimizer=0
                         ),
                     ),
                 ]
@@ -519,10 +501,7 @@ def _resolve_model_specs(
     requested_models: list[str] | None,
 ) -> dict[str, dict[str, Any]]:
     specs = make_model_specs(
-        preset=preset,
-        random_state=random_state,
-        use_cuda=use_cuda,
-        include_gpr=include_gpr,
+        preset=preset, random_state=random_state, use_cuda=use_cuda, include_gpr=include_gpr
     )
 
     if skip_slow_models:
@@ -585,36 +564,139 @@ def _make_search(
         )
 
     return GridSearchCV(
-        estimator=clone(model_spec["pipeline"]),
-        param_grid=model_spec["param_grid"],
-        **common,
+        estimator=clone(model_spec["pipeline"]), param_grid=model_spec["param_grid"], **common
     )
 
 
-def _grouped_train_holdout_split(
+def _read_features_csv(path: str | Path) -> tuple[pd.DataFrame, Path]:
+    csv_path = Path(path)
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Feature CSV not found: {csv_path}")
+    if csv_path.is_dir():
+        raise IsADirectoryError(f"Expected a CSV file but got a directory: {csv_path}")
+    if csv_path.suffix.lower() != ".csv":
+        raise ValueError(f"Expected a .csv file, got: {csv_path}")
+    return pd.read_csv(csv_path), csv_path
+
+
+def _resolve_split_fractions(
+    *, train_fraction: float | None, val_fraction: float, test_fraction: float
+) -> tuple[float, float, float]:
+    if val_fraction <= 0 or test_fraction <= 0:
+        raise ValueError("val_fraction and test_fraction must both be > 0.")
+
+    if train_fraction is None:
+        train_fraction = 1.0 - val_fraction - test_fraction
+
+    if train_fraction <= 0:
+        raise ValueError("train_fraction must be > 0 after resolving split fractions.")
+
+    total = float(train_fraction + val_fraction + test_fraction)
+    if not np.isclose(total, 1.0, atol=1e-8):
+        raise ValueError(
+            f"train_fraction + val_fraction + test_fraction must sum to 1.0 (got {total:.6f})."
+        )
+
+    return float(train_fraction), float(val_fraction), float(test_fraction)
+
+
+def _align_frame_to_features(df: pd.DataFrame, feature_names: list[str]) -> pd.DataFrame:
+    aligned = df.copy()
+    missing = [col for col in feature_names if col not in aligned.columns]
+    for col in missing:
+        aligned[col] = np.nan
+    if missing:
+        logger.warning(
+            "Added %d missing feature columns as NaN for evaluation alignment.", len(missing)
+        )
+    return aligned
+
+
+def _split_external_holdout(
+    df: pd.DataFrame, *, holdout_runs: list[str] | None, external_holdout_csv: str | Path | None
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str], str | None]:
+    pool_df = df.copy()
+    holdout_parts: list[pd.DataFrame] = []
+    external_csv_path_str: str | None = None
+
+    if holdout_runs:
+        holdout_run_set = {str(run) for run in holdout_runs}
+        mask_holdout = pool_df[GROUP_COL].astype(str).isin(holdout_run_set)
+        holdout_from_main = pool_df.loc[mask_holdout].copy()
+        if holdout_from_main.empty:
+            raise ValueError("None of the provided --holdout-runs matched the CSV.")
+        holdout_from_main["_holdout_source"] = "main_csv_holdout_runs"
+        holdout_parts.append(holdout_from_main)
+        pool_df = pool_df.loc[~mask_holdout].copy()
+
+    if external_holdout_csv is not None:
+        external_df, external_csv_path = _read_features_csv(external_holdout_csv)
+        if GROUP_COL not in external_df.columns:
+            raise ValueError(f"Expected '{GROUP_COL}' column in external holdout CSV.")
+        external_df = external_df.copy()
+        external_df["_holdout_source"] = "external_holdout_csv"
+        holdout_parts.append(external_df)
+        external_csv_path_str = str(external_csv_path)
+
+    if pool_df.empty:
+        raise ValueError("External holdout selection removed all rows from the main training pool.")
+
+    if holdout_parts:
+        external_holdout_df = pd.concat(holdout_parts, ignore_index=True, sort=False)
+    else:
+        external_holdout_df = pd.DataFrame(columns=list(df.columns) + ["_holdout_source"])
+
+    external_holdout_run_ids = sorted(
+        external_holdout_df.get(GROUP_COL, pd.Series(dtype=str))
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+    return pool_df, external_holdout_df, external_holdout_run_ids, external_csv_path_str
+
+
+def _grouped_train_val_test_split(
     df: pd.DataFrame,
     *,
-    holdout_runs: list[str] | None,
-    train_fraction: float,
+    train_fraction: float | None,
+    val_fraction: float,
+    test_fraction: float,
     random_state: int,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if holdout_runs:
-        mask_holdout = df[GROUP_COL].astype(str).isin([str(x) for x in holdout_runs])
-        holdout_df = df.loc[mask_holdout].copy()
-        train_df = df.loc[~mask_holdout].copy()
-        if holdout_df.empty:
-            raise ValueError("None of the provided --holdout-runs matched the CSV.")
-        if train_df.empty:
-            raise ValueError("Holdout split removed all rows from training.")
-        return train_df, holdout_df
-
-    gss = GroupShuffleSplit(
-        n_splits=1,
-        test_size=1 - train_fraction,
-        random_state=random_state,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    train_fraction, val_fraction, test_fraction = _resolve_split_fractions(
+        train_fraction=train_fraction, val_fraction=val_fraction, test_fraction=test_fraction
     )
-    train_idx, hold_idx = next(gss.split(df, groups=df[GROUP_COL]))
-    return df.iloc[train_idx].copy(), df.iloc[hold_idx].copy()
+
+    n_groups = int(df[GROUP_COL].astype(str).nunique())
+    if n_groups < 3:
+        raise ValueError(f"Need >=3 groups for internal train/val/test split, got {n_groups}.")
+
+    test_split = GroupShuffleSplit(n_splits=1, test_size=test_fraction, random_state=random_state)
+    train_val_idx, test_idx = next(test_split.split(df, groups=df[GROUP_COL]))
+    train_val_df = df.iloc[train_val_idx].copy()
+    test_df = df.iloc[test_idx].copy()
+
+    remaining_fraction = train_fraction + val_fraction
+    val_share_within_train_val = val_fraction / remaining_fraction
+
+    n_train_val_groups = int(train_val_df[GROUP_COL].astype(str).nunique())
+    if n_train_val_groups < 2:
+        raise ValueError(f"Need >=2 groups in train+val pool, got {n_train_val_groups}.")
+
+    val_split = GroupShuffleSplit(
+        n_splits=1,
+        test_size=val_share_within_train_val,
+        random_state=random_state + 1,
+    )
+    train_idx, val_idx = next(val_split.split(train_val_df, groups=train_val_df[GROUP_COL]))
+    train_df = train_val_df.iloc[train_idx].copy()
+    val_df = train_val_df.iloc[val_idx].copy()
+
+    if train_df.empty or val_df.empty or test_df.empty:
+        raise ValueError("Internal train/val/test split produced an empty partition.")
+
+    return train_df, val_df, test_df
 
 
 def _summarize_predictions(pred_df: pd.DataFrame) -> dict[str, float]:
@@ -784,6 +866,7 @@ def evaluate_on_holdout(
     doe_step: float,
     snap_predictions: bool,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
+    holdout_df = _align_frame_to_features(holdout_df, feature_names)
     present_cols = [
         c for c in feature_names + [TARGET_COL, GROUP_COL, RECORD_COL] if c in holdout_df.columns
     ]
@@ -823,11 +906,7 @@ def evaluate_on_holdout(
 
 
 def grouped_oof_predictions(
-    estimator_template: Any,
-    data_df: pd.DataFrame,
-    feature_names: list[str],
-    *,
-    n_splits_max: int,
+    estimator_template: Any, data_df: pd.DataFrame, feature_names: list[str], *, n_splits_max: int
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     present_cols = [
         c for c in feature_names + [TARGET_COL, GROUP_COL, RECORD_COL] if c in data_df.columns
@@ -892,8 +971,15 @@ def build_ensemble_predictions(
     fitted_members: list[Any] = []
     member_info: list[dict[str, Any]] = []
 
+    holdout_df = _align_frame_to_features(holdout_df, feature_names)
     holdout_eval = (
-        holdout_df[feature_names + [TARGET_COL, GROUP_COL]]
+        holdout_df[
+            [
+                c
+                for c in feature_names + [TARGET_COL, GROUP_COL, RECORD_COL]
+                if c in holdout_df.columns
+            ]
+        ]
         .dropna(subset=[TARGET_COL, GROUP_COL])
         .copy()
     )
@@ -929,7 +1015,7 @@ def build_ensemble_predictions(
         member_info.append(
             {
                 "model_name": model_name,
-                "nested_cv_mae": float(row["mae_mean"]),
+                "nested_cv_mae": float(row["nested_cv_mae"]),
                 "best_params": json.dumps(search.best_params_, sort_keys=True),
             }
         )
@@ -983,7 +1069,10 @@ def train_classical(
     out_dir: str | Path,
     *,
     holdout_runs: list[str] | None = None,
-    train_fraction: float = 0.70,
+    external_holdout_csv: str | Path | None = None,
+    train_fraction: float | None = None,
+    val_fraction: float = 0.15,
+    test_fraction: float = 0.15,
     outer_max_splits: int = 5,
     inner_max_splits: int = 4,
     preset: str = "balanced",
@@ -999,10 +1088,17 @@ def train_classical(
     doe_step: float = DOE_STEP_MM,
     random_state: int = 42,
 ) -> dict[str, Any]:
-    """Train classical ML models with grouped holdout + nested grouped CV.
+    """Train classical ML models with internal train/val/test splitting.
 
-    Parameters are intentionally aligned with the newer standalone trainer,
-    but this function operates on a single selected-features CSV.
+    Workflow
+    --------
+    1. Load one selected-features CSV.
+    2. Remove optional external holdout runs / CSV from the training pool.
+    3. Split the remaining pool into grouped train / val / test.
+    4. Run nested grouped CV on the internal training split only.
+    5. Score candidate models on the internal validation split.
+    6. Refit the winning model on train+val and evaluate on the internal test split.
+    7. Optionally evaluate the final fitted model on a fully external holdout.
     """
     preset = _normalise_preset(preset)
     out_dir = Path(out_dir)
@@ -1013,14 +1109,14 @@ def train_classical(
     if ensemble_top_n < 1:
         raise ValueError("ensemble_top_n must be >= 1")
 
-    df = pd.read_csv(features_csv)
+    df, features_csv_path = _read_features_csv(features_csv)
     if GROUP_COL not in df.columns:
         raise ValueError(f"Expected '{GROUP_COL}' column in features CSV.")
     feat_cols = _feature_cols(df)
     if not feat_cols:
         raise ValueError("No numeric feature columns found in features CSV.")
 
-    logger.info("Loaded %d rows × %d features from %s", len(df), len(feat_cols), features_csv)
+    logger.info("Loaded %d rows  %d features from %s", len(df), len(feat_cols), features_csv_path)
     logger.info(
         "Preset=%s | n_iter=%d | use_cuda=%s | ensemble_top_n=%d | skip_slow=%s",
         preset,
@@ -1030,30 +1126,67 @@ def train_classical(
         skip_slow_models,
     )
 
-    train_df, holdout_df = _grouped_train_holdout_split(
-        df,
-        holdout_runs=holdout_runs,
+    pool_df, external_holdout_df, external_holdout_run_ids, external_holdout_csv_path = (
+        _split_external_holdout(
+            df,
+            holdout_runs=holdout_runs,
+            external_holdout_csv=external_holdout_csv,
+        )
+    )
+    train_fraction, val_fraction, test_fraction = _resolve_split_fractions(
+        train_fraction=train_fraction, val_fraction=val_fraction, test_fraction=test_fraction
+    )
+    train_df, val_df, test_df = _grouped_train_val_test_split(
+        pool_df,
         train_fraction=train_fraction,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
         random_state=random_state,
     )
+    train_val_df = pd.concat([train_df, val_df], axis=0).sort_index()
+
     train_runs = sorted(train_df[GROUP_COL].astype(str).unique().tolist())
-    holdout_runs_actual = sorted(holdout_df[GROUP_COL].astype(str).unique().tolist())
+    val_runs = sorted(val_df[GROUP_COL].astype(str).unique().tolist())
+    test_runs = sorted(test_df[GROUP_COL].astype(str).unique().tolist())
+
     logger.info(
-        "Split: train=%d rows / %d runs | holdout=%d rows / %d runs",
+        "Internal split | train=%d rows / %d runs | val=%d rows / %d runs | test=%d rows / %d runs",
         len(train_df),
         len(train_runs),
-        len(holdout_df),
-        len(holdout_runs_actual),
+        len(val_df),
+        len(val_runs),
+        len(test_df),
+        len(test_runs),
     )
+    if not external_holdout_df.empty:
+        logger.info(
+            "External holdout | rows=%d | runs=%d",
+            len(external_holdout_df),
+            len(external_holdout_run_ids),
+        )
 
     split_assign_cols = [GROUP_COL, TARGET_COL] + ([RECORD_COL] if RECORD_COL in df.columns else [])
     split_assign = df[split_assign_cols].copy()
-    split_assign["split"] = "train"
-    holdout_index = set(holdout_df.index.tolist())
-    split_assign.loc[split_assign.index.isin(holdout_index), "split"] = "holdout"
+    split_assign["split"] = "unassigned"
+    split_assign.loc[train_df.index, "split"] = "train"
+    split_assign.loc[val_df.index, "split"] = "val"
+    split_assign.loc[test_df.index, "split"] = "test"
+    if holdout_runs:
+        holdout_from_main = df[GROUP_COL].astype(str).isin({str(x) for x in holdout_runs})
+        split_assign.loc[holdout_from_main, "split"] = "external_holdout"
     split_assign.to_csv(
         out_dir / "fixed_grouped_split_assignment.csv", index=True, index_label="row_index"
     )
+
+    if not external_holdout_df.empty:
+        ext_cols = [
+            c
+            for c in [GROUP_COL, TARGET_COL, RECORD_COL, "_holdout_source"]
+            if c in external_holdout_df.columns
+        ]
+        external_holdout_df[ext_cols].copy().to_csv(
+            out_dir / "external_holdout_assignment.csv", index=False
+        )
 
     model_specs = _resolve_model_specs(
         preset=preset,
@@ -1108,12 +1241,95 @@ def train_classical(
     summary["mae_fraction_of_doe_step"] = summary["mae_mean"] / doe_step
     summary.to_csv(out_dir / "nested_groupkfold_summary.csv", index=False)
 
-    best_row = summary.iloc[0]
-    best_model_name = str(best_row["model_name"])
-    logger.info("Winner: %s with nested CV MAE %.4f", best_model_name, float(best_row["mae_mean"]))
+    nested_cv_winner_row = summary.iloc[0].to_dict()
+    logger.info(
+        "Nested CV winner on train split: %s with MAE %.4f",
+        nested_cv_winner_row["model_name"],
+        float(nested_cv_winner_row["mae_mean"]),
+    )
+
+    validation_rows: list[dict[str, Any]] = []
+    candidate_searches: dict[str, GridSearchCV | RandomizedSearchCV] = {}
+    candidate_val_predictions: dict[str, pd.DataFrame] = {}
+    for _, row in summary.iterrows():
+        model_name = str(row["model_name"])
+        search = fit_model_on_train(
+            train_df,
+            feat_cols,
+            model_name,
+            model_specs[model_name],
+            inner_max_splits=inner_max_splits,
+            search_n_jobs=search_n_jobs,
+            preset=preset,
+            n_iter=n_iter,
+            random_state=random_state,
+            use_cuda=use_cuda,
+        )
+        candidate_searches[model_name] = search
+        val_pred_df, val_metrics = evaluate_on_holdout(
+            search.best_estimator_,
+            val_df,
+            feat_cols,
+            target_mae=target_mae,
+            doe_step=doe_step,
+            snap_predictions=snap_predictions,
+        )
+        candidate_val_predictions[model_name] = val_pred_df
+        validation_rows.append(
+            {
+                "model_name": model_name,
+                "nested_cv_mae": float(row["mae_mean"]),
+                "nested_cv_rmse": float(row["rmse_mean"]),
+                "nested_cv_r2": float(row["r2_mean"]),
+                "validation_mae": float(val_metrics["holdout_mae"]),
+                "validation_rmse": float(val_metrics["holdout_rmse"]),
+                "validation_r2": float(val_metrics["holdout_r2"]),
+                "validation_bias_mean": float(val_metrics["bias_mean"]),
+                "best_params": json.dumps(search.best_params_, sort_keys=True),
+            }
+        )
+        logger.info(
+            "Validation | %s | MAE=%.4f | RMSE=%.4f | R2=%.4f",
+            model_name,
+            float(val_metrics["holdout_mae"]),
+            float(val_metrics["holdout_rmse"]),
+            float(val_metrics["holdout_r2"]),
+        )
+
+    validation_summary = (
+        pd.DataFrame(validation_rows)
+        .sort_values(
+            ["validation_mae", "nested_cv_mae", "validation_rmse", "validation_r2"],
+            ascending=[True, True, True, False],
+        )
+        .reset_index(drop=True)
+    )
+    validation_summary.to_csv(out_dir / "validation_model_summary.csv", index=False)
+
+    best_model_name = str(validation_summary.iloc[0]["model_name"])
+    logger.info(
+        "Validation winner: %s with MAE %.4f",
+        best_model_name,
+        float(validation_summary.iloc[0]["validation_mae"]),
+    )
+
+    best_validation_pred_df = candidate_val_predictions[best_model_name]
+    best_validation_metrics = {
+        "holdout_mae": float(validation_summary.iloc[0]["validation_mae"]),
+        "holdout_rmse": float(validation_summary.iloc[0]["validation_rmse"]),
+        "holdout_r2": float(validation_summary.iloc[0]["validation_r2"]),
+        "bias_mean": float(validation_summary.iloc[0]["validation_bias_mean"]),
+        "model_name": best_model_name,
+        "n_holdout_rows": int(len(best_validation_pred_df)),
+        "n_holdout_runs": int(best_validation_pred_df[GROUP_COL].nunique()),
+    }
+    best_validation_pred_df.to_csv(out_dir / "validation_predictions.csv", index=False)
+    pd.DataFrame([best_validation_metrics]).to_csv(
+        final_dir / "validation_metrics.csv", index=False
+    )
 
     final_search = fit_model_on_train(
-        train_df,
+        train_val_df,
         feat_cols,
         best_model_name,
         model_specs[best_model_name],
@@ -1129,66 +1345,90 @@ def train_classical(
 
     pd.DataFrame(final_search.cv_results_).assign(
         params_json=lambda d: d["params"].apply(lambda x: json.dumps(x, sort_keys=True))
-    ).to_csv(out_dir / "best_model_final_train_cv_results.csv", index=False)
+    ).to_csv(out_dir / "best_model_final_trainval_cv_results.csv", index=False)
 
     train_oof_pred_df, train_oof_metrics = grouped_oof_predictions(
-        best_estimator,
-        train_df,
-        feat_cols,
-        n_splits_max=outer_max_splits,
+        best_estimator, train_val_df, feat_cols, n_splits_max=outer_max_splits
+    )
+    train_oof_pred_df.to_csv(
+        out_dir / "trainval_post_selection_grouped_oof_predictions.csv", index=False
     )
     train_oof_pred_df.to_csv(
         out_dir / "train_post_selection_grouped_oof_predictions.csv", index=False
     )
     pd.DataFrame([train_oof_metrics]).to_csv(
+        out_dir / "trainval_post_selection_grouped_oof_metrics.csv", index=False
+    )
+    pd.DataFrame([train_oof_metrics]).to_csv(
         out_dir / "train_post_selection_grouped_oof_metrics.csv", index=False
     )
 
-    holdout_pred_df, holdout_metrics = evaluate_on_holdout(
+    test_pred_df, test_metrics = evaluate_on_holdout(
         best_estimator,
-        holdout_df,
+        test_df,
         feat_cols,
         target_mae=target_mae,
         doe_step=doe_step,
         snap_predictions=snap_predictions,
     )
-    holdout_pred_df.to_csv(out_dir / "holdout_predictions.csv", index=False)
-    pd.DataFrame([holdout_metrics]).to_csv(final_dir / "holdout_metrics.csv", index=False)
+    test_pred_df.to_csv(out_dir / "test_predictions.csv", index=False)
+    test_pred_df.to_csv(out_dir / "holdout_predictions.csv", index=False)
+    pd.DataFrame([test_metrics]).to_csv(final_dir / "test_metrics.csv", index=False)
+    pd.DataFrame([test_metrics]).to_csv(final_dir / "holdout_metrics.csv", index=False)
 
-    fold_pred_matrix: list[np.ndarray] = []
-    X_train = train_df[feat_cols].to_numpy(dtype=np.float64)
-    y_train = train_df[TARGET_COL].to_numpy(dtype=np.float64)
-    groups = train_df[GROUP_COL].to_numpy()
-    X_hold = holdout_df[feat_cols].to_numpy(dtype=np.float64)
-    outer_cv = GroupKFold(n_splits=min(outer_max_splits, pd.Series(groups).nunique()))
-    for tr_idx, _ in outer_cv.split(X_train, y_train, groups):
-        refit_search = fit_model_on_train(
-            train_df.iloc[tr_idx].copy(),
+    external_holdout_metrics: dict[str, Any] | None = None
+    if not external_holdout_df.empty:
+        external_holdout_pred_df, external_holdout_metrics = evaluate_on_holdout(
+            best_estimator,
+            external_holdout_df,
             feat_cols,
-            best_model_name,
-            model_specs[best_model_name],
-            inner_max_splits=inner_max_splits,
-            search_n_jobs=search_n_jobs,
-            preset=preset,
-            n_iter=n_iter,
-            random_state=random_state,
-            use_cuda=use_cuda,
+            target_mae=target_mae,
+            doe_step=doe_step,
+            snap_predictions=snap_predictions,
         )
-        fold_pred_matrix.append(refit_search.best_estimator_.predict(X_hold))
+        external_holdout_pred_df.to_csv(out_dir / "external_holdout_predictions.csv", index=False)
+        pd.DataFrame([external_holdout_metrics]).to_csv(
+            final_dir / "external_holdout_metrics.csv", index=False
+        )
 
-    fold_preds_arr = np.stack(fold_pred_matrix, axis=1)
-    sigma_pred = float(np.std(fold_preds_arr, axis=1).mean())
-    sigma_mae = float(np.std(holdout_pred_df["residual"].to_numpy(dtype=np.float64)))
+    sigma_pred = 0.0
+    sigma_mae = float(np.std(test_pred_df["residual"].to_numpy(dtype=np.float64)))
+    train_val_groups = train_val_df[GROUP_COL].astype(str).to_numpy()
+    n_uncertainty_groups = int(pd.Series(train_val_groups).nunique())
+    if n_uncertainty_groups >= 2:
+        fold_pred_matrix: list[np.ndarray] = []
+        X_train_val = train_val_df[feat_cols].to_numpy(dtype=np.float64)
+        y_train_val = train_val_df[TARGET_COL].to_numpy(dtype=np.float64)
+        X_test = _align_frame_to_features(test_df, feat_cols)[feat_cols].to_numpy(dtype=np.float64)
+        outer_cv = GroupKFold(n_splits=min(outer_max_splits, n_uncertainty_groups))
+        for tr_idx, _ in outer_cv.split(X_train_val, y_train_val, train_val_groups):
+            refit_search = fit_model_on_train(
+                train_val_df.iloc[tr_idx].copy(),
+                feat_cols,
+                best_model_name,
+                model_specs[best_model_name],
+                inner_max_splits=inner_max_splits,
+                search_n_jobs=search_n_jobs,
+                preset=preset,
+                n_iter=n_iter,
+                random_state=random_state,
+                use_cuda=use_cuda,
+            )
+            fold_pred_matrix.append(refit_search.best_estimator_.predict(X_test))
+        fold_preds_arr = np.stack(fold_pred_matrix, axis=1)
+        sigma_pred = float(np.std(fold_preds_arr, axis=1).mean())
     total_uncertainty = float(np.sqrt(sigma_pred**2 + sigma_mae**2))
 
     ensemble_metrics_json: dict[str, Any] | None = None
+    ensemble_external_holdout_metrics_json: dict[str, Any] | None = None
     if ensemble_top_n > 1:
-        ensemble_top_n = min(ensemble_top_n, len(summary))
-        logger.info("Building ensemble from top-%d models", ensemble_top_n)
+        ensemble_top_n = min(ensemble_top_n, len(validation_summary))
+        logger.info("Building ensemble from top-%d validation models", ensemble_top_n)
+        ensemble_top_rows = validation_summary.head(ensemble_top_n)
         ensemble_pred_df, ensemble_metrics = build_ensemble_predictions(
-            summary.head(ensemble_top_n),
-            train_df=train_df,
-            holdout_df=holdout_df,
+            ensemble_top_rows,
+            train_df=train_val_df,
+            holdout_df=test_df,
             feature_names=feat_cols,
             preset=preset,
             random_state=random_state,
@@ -1201,12 +1441,45 @@ def train_classical(
             doe_step=doe_step,
             snap_predictions=snap_predictions,
         )
+        ensemble_pred_df.to_csv(out_dir / "ensemble_test_predictions.csv", index=False)
         ensemble_pred_df.to_csv(out_dir / "ensemble_holdout_predictions.csv", index=False)
         ensemble_members = ensemble_metrics.pop("fitted_members")
         ensemble_metrics_json = {k: v for k, v in ensemble_metrics.items()}
         pd.DataFrame([ensemble_metrics_json]).to_csv(
+            final_dir / "ensemble_test_metrics.csv", index=False
+        )
+        pd.DataFrame([ensemble_metrics_json]).to_csv(
             final_dir / "ensemble_holdout_metrics.csv", index=False
         )
+
+        if not external_holdout_df.empty:
+            ensemble_external_pred_df, ensemble_external_metrics = build_ensemble_predictions(
+                ensemble_top_rows,
+                train_df=train_val_df,
+                holdout_df=external_holdout_df,
+                feature_names=feat_cols,
+                preset=preset,
+                random_state=random_state,
+                use_cuda=use_cuda,
+                include_gpr=include_gpr,
+                skip_slow_models=skip_slow_models,
+                inner_max_splits=inner_max_splits,
+                search_n_jobs=search_n_jobs,
+                n_iter=n_iter,
+                doe_step=doe_step,
+                snap_predictions=snap_predictions,
+            )
+            ensemble_external_pred_df.to_csv(
+                out_dir / "ensemble_external_holdout_predictions.csv", index=False
+            )
+            ensemble_external_metrics.pop("fitted_members")
+            ensemble_external_holdout_metrics_json = {
+                k: v for k, v in ensemble_external_metrics.items()
+            }
+            pd.DataFrame([ensemble_external_holdout_metrics_json]).to_csv(
+                final_dir / "ensemble_external_holdout_metrics.csv", index=False
+            )
+
         joblib.dump(
             {
                 "members": [
@@ -1215,7 +1488,12 @@ def train_classical(
                         "model_name": info["model_name"],
                         "feature_cols": feat_cols,
                         "selected_features": feat_cols,
-                        "nested_cv_mae": info["nested_cv_mae"],
+                        "validation_mae": float(
+                            ensemble_top_rows.loc[
+                                ensemble_top_rows["model_name"] == info["model_name"],
+                                "validation_mae",
+                            ].iloc[0]
+                        ),
                     }
                     for fitted_member, info in zip(
                         ensemble_members, ensemble_metrics_json["members"]
@@ -1227,6 +1505,7 @@ def train_classical(
                 "group_col": GROUP_COL,
                 "record_col": RECORD_COL,
                 "ensemble_metrics": ensemble_metrics_json,
+                "ensemble_external_holdout_metrics": ensemble_external_holdout_metrics_json,
             },
             final_dir / "ensemble_model_bundle.joblib",
         )
@@ -1237,7 +1516,11 @@ def train_classical(
         "selected_features": feat_cols,
         "best_model_name": best_model_name,
         "best_params": best_params,
-        "holdout_mae": holdout_metrics["holdout_mae"],
+        "holdout_mae": test_metrics["holdout_mae"],
+        "test_metrics": test_metrics,
+        "holdout_metrics": test_metrics,
+        "validation_metrics": best_validation_metrics,
+        "external_holdout_metrics": external_holdout_metrics,
         "sigma_pred": sigma_pred,
         "sigma_mae": sigma_mae,
         "total_uncertainty": total_uncertainty,
@@ -1246,13 +1529,16 @@ def train_classical(
         "group_col": GROUP_COL,
         "record_col": RECORD_COL,
         "train_run_ids": train_runs,
-        "holdout_run_ids": holdout_runs_actual,
+        "val_run_ids": val_runs,
+        "test_run_ids": test_runs,
+        "holdout_run_ids": external_holdout_run_ids,
         "snap_predictions": snap_predictions,
         "doe_step_mm": doe_step,
-        "nested_cv_winner_row": best_row.to_dict(),
-        "holdout_metrics": holdout_metrics,
+        "nested_cv_winner_row": nested_cv_winner_row,
+        "validation_winner_row": validation_summary.iloc[0].to_dict(),
         "post_selection_grouped_oof_metrics": train_oof_metrics,
         "ensemble_metrics": ensemble_metrics_json,
+        "ensemble_external_holdout_metrics": ensemble_external_holdout_metrics_json,
         "use_cuda": use_cuda,
     }
     bundle_path = final_dir / "best_model_bundle.joblib"
@@ -1260,41 +1546,57 @@ def train_classical(
 
     metadata = {
         "best_model_name": best_model_name,
-        "features_csv": str(features_csv),
+        "features_csv": str(features_csv_path),
+        "external_holdout_csv": external_holdout_csv_path,
         "n_features": len(feat_cols),
         "n_train_rows": int(len(train_df)),
-        "n_holdout_rows": int(len(holdout_df)),
+        "n_val_rows": int(len(val_df)),
+        "n_test_rows": int(len(test_df)),
+        "n_external_holdout_rows": int(len(external_holdout_df)),
         "n_train_runs": int(len(train_runs)),
-        "n_holdout_runs": int(len(holdout_runs_actual)),
-        "holdout_runs": holdout_runs_actual,
+        "n_val_runs": int(len(val_runs)),
+        "n_test_runs": int(len(test_runs)),
+        "n_external_holdout_runs": int(len(external_holdout_run_ids)),
+        "holdout_runs": external_holdout_run_ids,
         "preset": preset,
         "n_iter": int(n_iter),
         "search_n_jobs": int(search_n_jobs),
         "outer_max_splits": int(outer_max_splits),
         "inner_max_splits": int(inner_max_splits),
+        "train_fraction": float(train_fraction),
+        "val_fraction": float(val_fraction),
+        "test_fraction": float(test_fraction),
         "requested_models": requested_models or [],
         "include_gpr": bool(include_gpr),
         "skip_slow_models": bool(skip_slow_models),
         "use_cuda": bool(use_cuda),
         "ensemble_top_n": int(ensemble_top_n),
         "snap_predictions": bool(snap_predictions),
-        "holdout_metrics": holdout_metrics,
+        "validation_metrics": best_validation_metrics,
+        "test_metrics": test_metrics,
+        "holdout_metrics": test_metrics,
+        "external_holdout_metrics": external_holdout_metrics,
         "sigma_pred": sigma_pred,
         "sigma_mae": sigma_mae,
         "total_uncertainty": total_uncertainty,
         "best_params": best_params,
-        "cv_winner": best_row.to_dict(),
+        "nested_cv_winner": nested_cv_winner_row,
+        "validation_winner": validation_summary.iloc[0].to_dict(),
         "post_selection_grouped_oof_metrics": train_oof_metrics,
         "ensemble_metrics": ensemble_metrics_json,
+        "ensemble_external_holdout_metrics": ensemble_external_holdout_metrics_json,
     }
     with open(final_dir / "best_model_metadata.json", "w", encoding="utf-8") as fh:
         json.dump(metadata, fh, indent=2)
 
     run_config = {
-        "features_csv": str(features_csv),
+        "features_csv": str(features_csv_path),
+        "external_holdout_csv": external_holdout_csv_path,
         "out_dir": str(out_dir),
         "holdout_runs": holdout_runs or [],
         "train_fraction": float(train_fraction),
+        "val_fraction": float(val_fraction),
+        "test_fraction": float(test_fraction),
         "outer_max_splits": int(outer_max_splits),
         "inner_max_splits": int(inner_max_splits),
         "preset": preset,
@@ -1319,8 +1621,12 @@ def train_classical(
     return {
         "best_model_name": best_model_name,
         "best_params": best_params,
-        "holdout_metrics": holdout_metrics,
+        "validation_metrics": best_validation_metrics,
+        "test_metrics": test_metrics,
+        "holdout_metrics": test_metrics,
+        "external_holdout_metrics": external_holdout_metrics,
         "summary_df": summary,
+        "validation_summary_df": validation_summary,
         "nested_results_df": results_df,
         "inner_search_df": inner_search_df,
         "repeat_metrics_df": results_df,
@@ -1329,6 +1635,9 @@ def train_classical(
         "bundle_path": str(bundle_path),
         "total_uncertainty": total_uncertainty,
         "ensemble_metrics": ensemble_metrics_json,
+        "ensemble_external_holdout_metrics": ensemble_external_holdout_metrics_json,
         "train_run_ids": train_runs,
-        "holdout_run_ids": holdout_runs_actual,
+        "val_run_ids": val_runs,
+        "test_run_ids": test_runs,
+        "holdout_run_ids": external_holdout_run_ids,
     }

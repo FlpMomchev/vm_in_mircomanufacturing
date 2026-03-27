@@ -7,7 +7,7 @@ name = "vm_in_micromanufacturing"
 version = "0.1.0"
 description = "Virtual metrology for micro-drilling depth prediction via airborne and structure-borne acoustic sensing."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = { text = "MIT" }
 
 dependencies = [
@@ -25,10 +25,6 @@ dependencies = [
     "PyWavelets>=1.6",
     "h5py>=3.11",
     "openpyxl>=3.1",          # Excel DOE manifest loading
-
-    # DL framework
-    "torch>=2.3",
-    "torchaudio>=2.3",
 
     # Gradient boosting (classical ML)
     "xgboost>=2.0",
@@ -53,6 +49,10 @@ dev = [
     "mypy>=1.10",
 ]
 
+dl = [
+    "torch>=2.7",
+]
+
 [project.scripts]
 vm-split     = "scripts.split_audio:main"
 vm-extract-air = "scripts.extract_airborne:main"
@@ -62,19 +62,20 @@ vm-train-cls = "scripts.train_classical:main"
 vm-train-dl  = "scripts.train_dl:main"
 vm-infer     = "scripts.infer:main"
 vm-fuse      = "scripts.fuse:main"
+vm-predict-fused = "scripts.predict_fused:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["vm_micro*", "scripts*"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = [
-    "E501",   # line too long — feature name strings are intentionally long
+    "E501",   # line too long  feature name strings are intentionally long
 ]
 
 [tool.pytest.ini_options]
@@ -82,7 +83,7 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 
 [tool.ruff.lint.per-file-ignores]
-# Scripts do sys.path manipulation before imports — E402 is unavoidable there
+# Scripts do sys.path manipulation before imports  E402 is unavoidable there
 "scripts/*.py" = ["E402"]
 # Notebooks have inter-cell variable references ruff cannot follow across cells
 "notebooks/**/*.ipynb" = ["F821", "F841", "F811", "E741", "E501", "E402"]

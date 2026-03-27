@@ -1,5 +1,5 @@
 # configs/fusion.yaml
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Fusion layer configuration.
 # Architecture: inverse-validation-MAE weighted average per modality,
 # with propagated Gaussian uncertainty.
@@ -11,7 +11,7 @@
 #
 # Weights are derived from validation MAE stored alongside each model bundle.
 # If a modality is absent its weight is treated as 0 (skipped gracefully).
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 # Intra-modality fusion (feature-based + DL)
 intra_modality:

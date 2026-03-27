@@ -1,5 +1,6 @@
-# Python
+# Python / build caches
 __pycache__/
+.pre-commit-cache/
 *.py[cod]
 *.pyo
 *.pyd
@@ -25,21 +26,7 @@ env/
 *.ipynb_checkpoints
 21and23.ipynb
 
-# Project outputs (large, local only)
-models/
-catboost_info*/
-
-# Data (never commit raw or processed data)
-data*/
-
-# Model artefacts
-*.pt
-*.pth
-*.ckpt
-*.joblib
-*.pkl
-
-# Misc
+# IDE / OS junk
 .DS_Store
 Thumbs.db
 *.log
@@ -47,6 +34,15 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Secrets / env
+# Secrets / env files
 .env
 *.env
+
+# Local data (never commit raw/split/generated data)
+data/raw_data/
+data/raw_data_extracted_splits/
+data/features/
+models/
+
+# Training/inference tooling output
+catboost_info*/

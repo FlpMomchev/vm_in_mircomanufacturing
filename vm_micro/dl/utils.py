@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 import pandas as pd
 import soundfile as sf
@@ -19,6 +20,8 @@ from sklearn.metrics import (
     mean_squared_error,
     r2_score,
 )
+
+from vm_micro.data.io import get_input_kind
 
 DEPTH_RE = re.compile(r"depth\s*([0-9]+(?:[.,][0-9]+)?)", flags=re.IGNORECASE)
 STEP_RE = re.compile(r"__step\s*([0-9]+)__", flags=re.IGNORECASE)
@@ -62,41 +65,85 @@ def set_seed(seed: int) -> None:
 
 
 def choose_device(device: str = "auto") -> str:
+    import torch
+
     if device == "cpu":
         return "cpu"
     if device == "cuda":
-        return "cuda"
-
-    import torch
-
+        return "cuda" if torch.cuda.is_available() else "cpu"
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def build_file_table(data_dir: str | Path, file_glob: str = "**/*.flac") -> pd.DataFrame:
-    """Scan a directory and build the file-level metadata table used by the repo.
+def _h5_file_info(
+    file_path: Path,
+    data_key: str = "measurement/data",
+    time_key: str = "measurement/time_vector",
+) -> dict[str, Any]:
+    """Read duration and sample rate from an HDF5 measurement file without
+    loading the full signal into memory."""
+    with h5py.File(str(file_path), "r") as fh:
+        n_samples = fh[data_key].shape[0]
+        time_vector = fh[time_key][:]
 
-    Metadata is saved for analysis and splitting only. It is not fed into the model.
+    dt = np.diff(time_vector)
+    dt = dt[np.isfinite(dt) & (dt > 0)]
+    dt_median = float(np.median(dt)) if len(dt) else 1.0
+    sr = int(round(1.0 / dt_median))
+    duration_sec = float(n_samples / sr)
+
+    return {
+        "sample_rate_native": sr,
+        "duration_sec": duration_sec,
+        "frames_native": n_samples,
+        "channels": 1,
+    }
+
+
+def build_file_table(
+    data_dir: str | Path,
+    file_glob: str = "**/*.flac",
+    h5_data_key: str = "measurement/data",
+    h5_time_key: str = "measurement/time_vector",
+) -> pd.DataFrame:
+    """Scan a directory and build the file-level metadata table.
+
+    Supports both FLAC/WAV (airborne) and HDF5 (structure-borne) files.
+    The file_glob determines which format is scanned  use ``**/*.flac``
+    for airborne or ``**/*.h5`` for structure-borne.
+
+    Metadata is used for splitting and analysis only  it is never fed
+    into the model.
     """
-
     data_dir = Path(data_dir)
     rows: list[dict[str, Any]] = []
 
     for file_path in sorted(data_dir.glob(file_glob)):
-        info = sf.info(str(file_path))
-        rows.append(
-            {
-                "file_id": len(rows),
-                "path": str(file_path.resolve()),
-                "name": file_path.name,
-                "stem": file_path.stem,
-                "depth_mm": parse_depth_mm(file_path.stem),
-                "recording_root": extract_recording_root(file_path.stem),
-                "parent_dir": file_path.parent.name,
-                "file_group_id": file_path.stem,
+        kind = get_input_kind(file_path)
+
+        if kind == "audio":
+            info = sf.info(str(file_path))
+            file_meta = {
                 "sample_rate_native": int(info.samplerate),
                 "duration_sec": float(info.duration),
                 "frames_native": int(info.frames),
                 "channels": int(info.channels),
+            }
+        else:  # hdf5
+            file_meta = _h5_file_info(file_path, h5_data_key, h5_time_key)
+
+        rows.append(
+            {
+                "file_id": len(rows),
+                "path": str(file_path.resolve()),
+                "record_name": file_path.stem,
+                "stem": file_path.stem,
+                "file_name": file_path.name,
+                "input_kind": kind,
+                "depth_mm": parse_depth_mm(file_path.stem),
+                "recording_root": extract_recording_root(file_path.stem),
+                "parent_dir": file_path.parent.name,
+                "file_group_id": file_path.stem,
+                **file_meta,
             }
         )
 

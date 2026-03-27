@@ -12,21 +12,28 @@ class TrainConfig:
 
     data_dir: str
     file_glob: str = "**/*.flac"
-    output_dir: str = "outputs_dl_depth_advanced"
+    output_dir: str = "models/dl/run"
 
     task: str = "classification"
     feature_type: str = "logmel"
     model_type: str = "hybrid_spec_transformer"
 
-    sample_rate: int = 48_000
+    sample_rate: int = 192_000
     window_sec: float = 0.50
     window_hop_sec: float = 0.25
 
-    n_fft: int = 2_048
-    hop_length: int = 512
+    n_fft: int = 8_192
+    hop_length: int = 2_048
     n_mels: int = 128
     fmin: float = 100.0
-    fmax: float = 20_000.0
+    fmax: float = 40_000.0
+
+    # Linear spectrogram frontend
+    linear_spec_fmin: float = 0.0
+    linear_spec_fmax: float | None = None  # None -> use Nyquist
+
+    # Normalization control
+    peak_normalize: bool = True  # False -> skip per-file peak norm
 
     cwt_wavelet: str = "morl"
     cwt_num_scales: int = 64
@@ -34,11 +41,11 @@ class TrainConfig:
     cwt_fmax: float = 20_000.0
     cwt_precision: int = 10
 
-    batch_size: int = 16
-    epochs: int = 20
-    lr: float = 1e-3
+    batch_size: int = 32
+    epochs: int = 100
+    lr: float = 5e-4
     weight_decay: float = 1e-4
-    patience: int = 5
+    patience: int = 15
 
     num_workers: int = 4
     prefetch_factor: int = 2
@@ -50,14 +57,14 @@ class TrainConfig:
     max_windows_per_file_train: int | None = None
 
     cache_audio: bool = True
-    use_amp: bool = True
-    device: str = "auto"
-    channels_last: bool = True
+    use_amp: bool = False
+    device: str = "cuda"
+    channels_last: bool = False
     torch_compile: bool = False
 
     rounding_step_mm: float | None = 0.1
 
-    # stronger model controls
+    # Model controls
     backbone_embed_dim: int = 128
     transformer_layers: int = 2
     transformer_token_grid_size: int = 8
@@ -69,13 +76,26 @@ class TrainConfig:
     specaugment_freq_width: int = 12
 
     # LR scheduling and gradient clipping
-    warmup_epochs: int = 2
-    lr_min: float = 1e-5
+    warmup_epochs: int = 5
+    lr_min: float = 1e-6
     grad_clip: float = 1.0
 
     save_training_plots: bool = True
     save_attention_maps: bool = True
     attention_examples: int = 4
+
+    # Split / evaluation config
+    split_strategy: str = "stratified_random"
+    evaluation_unit: str = "file"
+    group_mode: str = "recording_root"
+    train_fraction: float = 0.75
+    val_fraction: float = 0.15
+    test_fraction: float = 0.10
+
+    # Experiment orchestration
+    n_repeats: int = 5
+    run_final_model: bool = True
+    final_epochs: int | None = None
 
     def signal_num_samples(self) -> int:
         return int(round(self.window_sec * self.sample_rate))

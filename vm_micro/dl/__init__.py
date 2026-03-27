@@ -1,4 +1,4 @@
-"""vm_micro.dl – Deep-learning depth prediction models.
+"""vm_micro.dl  Deep-learning depth prediction models.
 
 Provides the full training + inference pipeline for both classification
 and regression tasks on airborne (FLAC) and structure-borne (HDF5) audio.

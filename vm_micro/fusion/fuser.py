@@ -4,20 +4,20 @@ Self-contained fusion layer.
 
 Architecture
 ------------
-Stage 1 – intra-modality fusion
-    airborne_feat  + airborne_dl  → airborne_ensemble
-    structure_feat + structure_dl → structure_ensemble  (future)
+Stage 1  intra-modality fusion
+    airborne_feat  + airborne_dl   airborne_ensemble
+    structure_feat + structure_dl  structure_ensemble  (future)
 
-Stage 2 – inter-modality fusion
-    airborne_ensemble + structure_ensemble → final prediction
+Stage 2  inter-modality fusion
+    airborne_ensemble + structure_ensemble  final prediction
 
-Each stage uses **inverse-validation-MAE weighted averaging**:
-    w_i  = 1 / (MAE_i + ε)          (raw weight)
-    w̃_i  = max(w_i, min_weight)      (floor to avoid zero weight)
-    w̃_i  = w̃_i / sum(w̃_j)           (normalise)
+Each stage uses **inverse-MAE weighted averaging**:
+    w_i  = 1 / (MAE_i + )          (raw weight)
+    w_i  = max(w_i, min_weight)      (floor to avoid zero weight)
+    w_i  = w_i / sum(w_j)           (normalise)
 
 Uncertainty is propagated as:
-    σ_out = sqrt( sum_i  (w̃_i * σ_i)² )
+    _out = sqrt( sum_i  (w_i * _i) )
 
 Interface contract
 ------------------
@@ -51,8 +51,7 @@ class PredictionBundle:
     y_pred          : 1-D float array of depth predictions (mm).
     sigma           : Per-prediction uncertainty (std, mm).  Set to scalar
                       if homoscedastic.
-    validation_mae  : Scalar MAE on a held-out validation set.  Used for
-                      weighting in the fusion.
+    validation_mae  : Scalar reference MAE used for fusion weighting.
     y_true          : Optional ground-truth labels (mm); used for evaluation.
     class_probs     : Optional (N, C) probability matrix (classification).
     metadata        : Free-form dict for diagnostics.
@@ -92,9 +91,9 @@ class PredictionBundle:
         return df
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Core fusion functions
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 _EPS = 1e-9
 
@@ -216,9 +215,9 @@ def fuse_modalities(
     return _fuse(list(modality_bundles), fused_modality="final_fusion", min_weight=min_weight)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Convenience: load bundles from disk and fuse
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def load_bundle_from_csv(

@@ -69,7 +69,7 @@ def apply_overrides(cfg: dict[str, Any], overrides: list[str]) -> dict[str, Any]
     for token in overrides:
         token = token.lstrip("-")
         if "=" not in token:
-            # bare flag → True
+            # bare flag  True
             key_path, value_str = token, "true"
         else:
             key_path, value_str = token.split("=", 1)
@@ -85,9 +85,9 @@ def apply_overrides(cfg: dict[str, Any], overrides: list[str]) -> dict[str, Any]
     return cfg
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+#
 # Helpers
-# ──────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _parse_scalar(s: str) -> Any:

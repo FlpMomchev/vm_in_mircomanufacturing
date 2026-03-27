@@ -1,20 +1,22 @@
-"""vm-train-cls — Train classical ML models on selected features.
+"""vm-train-cls - Train classical ML models on selected features.
 
-Usage:
+Usage::
 
-    vm-train-cls \
-        --features-csv outputs/features/airborne/features_selected.csv \
-        --out-dir      outputs/features/airborne \
-        --holdout-runs 0303_3_1_8881 0503_7_2_9976 \
-        --preset balanced \
-        --inner-max-splits 4 \
-        --n-iter 40 \
-        --use-cuda \
+    vm-train-cls `
+        --features-csv data/features/airborne/features_selected.csv `
+        --out-dir      models/features/air/final_models_fast `
+        --holdout-runs 0303_3_1_8881 0503_7_2_9976 `
+        --val-fraction 0.15 `
+        --test-fraction 0.15 `
+        --preset balanced `
+        --inner-max-splits 4 `
+        --n-iter 40 `
+        --use-cuda `
         --ensemble-top-n 3
 
-The ``--holdout-runs`` flag accepts one or more ``recording_root`` values
-(plate run IDs) to exclude completely from training, matching the DL framework
-convention of keeping fully unseen runs.
+The training pool is always split internally into grouped train / val / test.
+Optional external testing can be provided either by excluding `--holdout-runs`
+from the main CSV or by passing a separate `--external-holdout-csv`.
 """
 
 from __future__ import annotations
@@ -38,8 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="vm-train-cls",
         description=(
-            "Train classical ML models with grouped holdout, nested grouped CV, "
-            "optional CUDA boosting, and optional top-N ensemble persistence."
+            "Train classical ML models with grouped internal train/val/test splits, "
+            "optional external holdouts, nested grouped CV, optional CUDA boosting, "
+            "and optional top-N ensemble persistence."
         ),
     )
     p.add_argument(
@@ -54,28 +57,50 @@ def build_parser() -> argparse.ArgumentParser:
         "--holdout-runs",
         nargs="*",
         default=None,
-        help="recording_root values to hold out completely (e.g. the unseen DL runs).",
+        help=(
+            "recording_root values to exclude from the internal train/val/test pool and use "
+            "only for external holdout evaluation."
+        ),
+    )
+    p.add_argument(
+        "--external-holdout-csv",
+        default=None,
+        help=("Optional second features CSV used only for final external holdout evaluation."),
     )
     p.add_argument(
         "--train-fraction",
         type=float,
-        default=0.70,
-        help="Used only when --holdout-runs is omitted. Fraction of groups kept for training.",
+        default=None,
+        help=(
+            "Internal train fraction. If omitted, it is inferred as 1 - val_fraction - test_fraction."
+        ),
+    )
+    p.add_argument(
+        "--val-fraction",
+        type=float,
+        default=0.15,
+        help="Internal validation fraction (grouped split).",
+    )
+    p.add_argument(
+        "--test-fraction",
+        type=float,
+        default=0.15,
+        help="Internal test fraction (grouped split).",
     )
     p.add_argument(
         "--preset",
         default="balanced",
         choices=["fast", "balanced", "exhaustive"],
         help=(
-            "Hyperparameter search preset. 'fast' uses small grids. 'balanced' and 'exhaustive' "
-            "use RandomizedSearchCV."
+            "Hyperparameter search preset. 'fast' uses small grids. 'balanced' and 'fast' use GridSearchCV."
+            "'exhaustive' uses RandomizedSearchCV."
         ),
     )
     p.add_argument(
         "--n-iter",
         type=int,
         default=160,
-        help="RandomizedSearchCV iterations for balanced / exhaustive presets.",
+        help="RandomizedSearchCV iterations for exhaustive presets.",
     )
     p.add_argument(
         "--search-n-jobs",
@@ -87,13 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--outer-max-splits",
         dest="outer_max_splits",
         type=int,
-        default=5,
+        default=7,
         help="Maximum number of outer grouped CV folds.",
     )
     p.add_argument(
         "--inner-max-splits",
         type=int,
-        default=4,
+        default=5,
         help="Maximum number of inner grouped CV folds used for hyperparameter search.",
     )
     p.add_argument(
@@ -172,7 +197,10 @@ def main() -> None:
         features_csv=args.features_csv,
         out_dir=args.out_dir,
         holdout_runs=args.holdout_runs,
+        external_holdout_csv=args.external_holdout_csv,
         train_fraction=args.train_fraction,
+        val_fraction=args.val_fraction,
+        test_fraction=args.test_fraction,
         outer_max_splits=args.outer_max_splits,
         inner_max_splits=args.inner_max_splits,
         preset=args.preset,
@@ -189,22 +217,33 @@ def main() -> None:
         random_state=args.seed,
     )
 
-    holdout = result["holdout_metrics"]
+    validation = result["validation_metrics"]
+    test_metrics = result["test_metrics"]
     print("\n=== Training complete ===")
-    print(f"Best model       : {result['best_model_name']}")
-    print(f"Holdout MAE      : {holdout['holdout_mae']:.4f} mm")
-    print(f"Holdout RMSE     : {holdout['holdout_rmse']:.4f} mm")
-    print(f"Holdout R²       : {holdout['holdout_r2']:.4f}")
-    print(f"Total uncertainty: {result['total_uncertainty']:.4f} mm")
+    print(f"Best model          : {result['best_model_name']}")
+    print(f"Validation MAE      : {validation['holdout_mae']:.4f} mm")
+    print(f"Validation RMSE     : {validation['holdout_rmse']:.4f} mm")
+    print(f"Validation R       : {validation['holdout_r2']:.4f}")
+    print(f"Internal test MAE   : {test_metrics['holdout_mae']:.4f} mm")
+    print(f"Internal test RMSE  : {test_metrics['holdout_rmse']:.4f} mm")
+    print(f"Internal test R    : {test_metrics['holdout_r2']:.4f}")
+    ext = result.get("external_holdout_metrics")
+    if ext:
+        print(f"External holdout MAE: {ext['holdout_mae']:.4f} mm")
+        print(f"External holdout RMSE: {ext['holdout_rmse']:.4f} mm")
+        print(f"External holdout R : {ext['holdout_r2']:.4f}")
+    print(f"Total uncertainty   : {result['total_uncertainty']:.4f} mm")
     if result.get("ensemble_metrics"):
         ens = result["ensemble_metrics"]
         print(
-            f"Ensemble (top-{ens['ensemble_n_members']}) : "
-            f"MAE={ens['ensemble_mae']:.4f} mm | RMSE={ens['ensemble_rmse']:.4f} mm | R²={ens['ensemble_r2']:.4f}"
+            f"Ensemble (top-{ens['ensemble_n_members']})  : "
+            f"MAE={ens['ensemble_mae']:.4f} mm | RMSE={ens['ensemble_rmse']:.4f} mm | R={ens['ensemble_r2']:.4f}"
         )
-    print(f"Holdout runs     : {', '.join(result['holdout_run_ids'])}")
-    print(f"Bundle saved to  : {result['bundle_path']}")
-    print(f"Output dir       : {result['out_dir']}")
+    print(
+        f"External holdout runs: {', '.join(result['holdout_run_ids']) if result['holdout_run_ids'] else '-'}"
+    )
+    print(f"Bundle saved to     : {result['bundle_path']}")
+    print(f"Output dir          : {result['out_dir']}")
 
     summary_path = Path(result["out_dir"]) / "nested_groupkfold_summary.csv"
     if summary_path.exists():
@@ -212,7 +251,9 @@ def main() -> None:
 
     metadata_preview = {
         "best_model_name": result["best_model_name"],
-        "holdout_metrics": holdout,
+        "validation_metrics": validation,
+        "test_metrics": test_metrics,
+        "external_holdout_metrics": result.get("external_holdout_metrics"),
         "ensemble_metrics": result.get("ensemble_metrics"),
     }
     logger.info("Run summary: %s", json.dumps(metadata_preview, default=str))

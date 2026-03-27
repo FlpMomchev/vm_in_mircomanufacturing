@@ -4,10 +4,10 @@ Segment long recordings (FLAC or HDF5) into individual drilling events.
 
 Algorithm
 ---------
-1. Compute a 2–5 kHz band-power envelope (configurable via ``band_hz``).
+1. Compute a 25 kHz band-power envelope (configurable via ``band_hz``).
 2. Estimate a slow-drift baseline with an asymmetric EMA (resists being
    pulled up by long active plateaus).
-3. Run an IDLE → ACTIVE → IDLE state machine on ``envelope – baseline``
+3. Run an IDLE  ACTIVE  IDLE state machine on ``envelope  baseline``
    with hysteresis and minimum-persistence guards.
 4. Post-process: split merged segments, merge chattering gaps, drop spikes.
 5. Refine segment edges with a relaxed look-back / look-ahead pass.
@@ -27,13 +27,16 @@ import pandas as pd
 import soundfile as sf
 from scipy import signal
 
+from ..utils import get_logger
 from .io import read_signal_auto
 from .manifest import build_segment_filename, map_segments_to_doe
 from .plots import save_debug_plots
 
-# ─────────────────────────────────────────────────────────────────────────────
+logger = get_logger(__name__)
+
+#
 # Envelope helpers
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def band_envelope_db(
@@ -96,9 +99,9 @@ def _asymmetric_baseline(b_raw: np.ndarray, win: int) -> np.ndarray:
     return b
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # State machine
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _state_machine(
@@ -150,9 +153,9 @@ def _state_machine(
     return segs
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Post-processing helpers
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _seg_duration(times: np.ndarray, seg: tuple[int, int]) -> float:
@@ -280,9 +283,9 @@ def _refine_to_expected(
     return segs
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Main detection
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def detect_segments(
@@ -459,9 +462,9 @@ def apply_padding(
     return out
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Export
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _seg_to_samples(a: float, b: float, sr: int, n_samples: int) -> tuple[int, int]:
@@ -575,9 +578,42 @@ def _fmt_ext(export_format: str, input_kind: str) -> str:
     ]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+def _normalize_band_hz(band: Any) -> tuple[float, float]:
+    if not isinstance(band, (list, tuple)) or len(band) != 2:
+        raise ValueError(f"Band must be a 2-element sequence [low_hz, high_hz], got {band!r}.")
+    lo, hi = float(band[0]), float(band[1])
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        raise ValueError(f"Band bounds must be finite numbers, got {band!r}.")
+    if hi <= lo:
+        raise ValueError(f"Band upper bound must be > lower bound, got {band!r}.")
+    return lo, hi
+
+
+def _resolve_band_candidates(
+    band_hz: tuple[float, float],
+    band_hz_fallbacks: list[tuple[float, float]] | None,
+) -> list[tuple[float, float]]:
+    candidates: list[tuple[float, float]] = []
+    for raw in [band_hz, *(band_hz_fallbacks or [])]:
+        band = _normalize_band_hz(raw)
+        if band not in candidates:
+            candidates.append(band)
+    return candidates
+
+
+def _format_band_attempts(attempts: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for a in attempts:
+        lo, hi = a["band_hz"]
+        parts.append(
+            f"[{lo:.1f},{hi:.1f}]=>core:{a['detected_segments_core']},final:{a['exported_segments_final']}"
+        )
+    return " | ".join(parts)
+
+
+#
 # High-level: process one file
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def process_one_file(
@@ -588,6 +624,7 @@ def process_one_file(
     pre_pad_s: float = 0.20,
     post_pad_s: float = 0.25,
     band_hz: tuple[float, float] = (2000.0, 5000.0),
+    band_hz_fallbacks: list[tuple[float, float]] | None = None,
     *,
     export_format: str = "auto",
     h5_data_key: str = "measurement/data",
@@ -609,11 +646,91 @@ def process_one_file(
     y, sr, duration_s = sig["y"], int(sig["sr"]), float(sig["duration_s"])
     tv, kind = sig["time_vector"], str(sig["input_kind"])
 
-    segs_s, dbg = detect_segments(y, sr, segments_per_file=expected_segments, band_hz=band_hz)
-    segs_padded = apply_padding(segs_s, pre_pad_s, post_pad_s, duration_s)
-    segs_final = refine_segment_edges(dbg, segs_padded)
+    band_candidates = _resolve_band_candidates(band_hz, band_hz_fallbacks)
+    attempts: list[dict[str, Any]] = []
+    selected: dict[str, Any] | None = None
 
-    # ── debug plots ───────────────────────────────────────────────────────────
+    for attempt_idx, cur_band in enumerate(band_candidates, start=1):
+        segs_cur, dbg_cur = detect_segments(
+            y,
+            sr,
+            segments_per_file=expected_segments,
+            band_hz=cur_band,
+        )
+        segs_pad_cur = apply_padding(segs_cur, pre_pad_s, post_pad_s, duration_s)
+        segs_fin_cur = refine_segment_edges(dbg_cur, segs_pad_cur)
+        final_n = len(segs_fin_cur)
+        core_n = len(segs_cur)
+        diff = abs(final_n - expected_segments)
+
+        attempt = {
+            "attempt_index": int(attempt_idx),
+            "band_hz": cur_band,
+            "detected_segments_core": int(core_n),
+            "exported_segments_final": int(final_n),
+            "abs_diff": int(diff),
+        }
+        attempts.append(attempt)
+
+        logger.info(
+            "Split attempt %d/%d | file=%s | band=[%.1f, %.1f] Hz | core=%d | final=%d | expected=%d",
+            attempt_idx,
+            len(band_candidates),
+            audio_path.name,
+            cur_band[0],
+            cur_band[1],
+            core_n,
+            final_n,
+            expected_segments,
+        )
+
+        candidate = {
+            "attempt_index": int(attempt_idx),
+            "band_hz": cur_band,
+            "segs_s": segs_cur,
+            "dbg": dbg_cur,
+            "segs_padded": segs_pad_cur,
+            "segs_final": segs_fin_cur,
+            "detected_segments_core": int(core_n),
+            "exported_segments_final": int(final_n),
+            "abs_diff": int(diff),
+        }
+        if selected is None or candidate["abs_diff"] < selected["abs_diff"]:
+            selected = candidate
+        if final_n == expected_segments:
+            selected = candidate
+            break
+
+    assert selected is not None
+    segs_s = selected["segs_s"]
+    dbg = selected["dbg"]
+    segs_padded = selected["segs_padded"]
+    segs_final = selected["segs_final"]
+    band_used = selected["band_hz"]
+    selected_attempt = int(selected["attempt_index"])
+    matched_expected = int(selected["exported_segments_final"]) == int(expected_segments)
+
+    if matched_expected and selected_attempt > 1:
+        logger.info(
+            "Matched expected segments for %s using fallback band [%.1f, %.1f] Hz (attempt %d/%d).",
+            audio_path.name,
+            band_used[0],
+            band_used[1],
+            selected_attempt,
+            len(band_candidates),
+        )
+    if not matched_expected:
+        logger.warning(
+            "No band candidate matched expected segments for %s; using closest band [%.1f, %.1f] Hz "
+            "(final=%d, expected=%d).",
+            audio_path.name,
+            band_used[0],
+            band_used[1],
+            int(selected["exported_segments_final"]),
+            int(expected_segments),
+        )
+
+    #  debug plots
     p_core, p_pad = save_debug_plots(
         dbg,
         segs_s,
@@ -669,6 +786,10 @@ def process_one_file(
                 "expected_segments": int(expected_segments),
                 "detected_segments_core": int(len(segs_s)),
                 "exported_segments_final": int(len(segs_final)),
+                "band_low_hz_used": float(band_used[0]),
+                "band_high_hz_used": float(band_used[1]),
+                "band_attempt_index_used": int(selected_attempt),
+                "band_attempts_total": int(len(band_candidates)),
                 "split_index": int(i),
                 "core_start_s": float(core[0]),
                 "core_end_s": float(core[1]),
@@ -694,6 +815,12 @@ def process_one_file(
         "expected_segments": int(expected_segments),
         "detected_segments_core": int(len(segs_s)),
         "exported_segments_final": int(len(segs_final)),
+        "band_hz_requested": tuple(_normalize_band_hz(band_hz)),
+        "band_hz_used": tuple(float(x) for x in band_used),
+        "band_attempt_index_used": int(selected_attempt),
+        "band_attempts_total": int(len(band_candidates)),
+        "band_match_found": bool(matched_expected),
+        "band_attempts_log": _format_band_attempts(attempts),
         "out_dir": str(out_dir),
         "debug_core": str(p_core),
         "debug_padded": str(p_pad),
@@ -708,6 +835,7 @@ def process_batch(
     pre_pad_s: float = 0.20,
     post_pad_s: float = 0.25,
     band_hz: tuple[float, float] = (2000.0, 5000.0),
+    band_hz_fallbacks: list[tuple[float, float]] | None = None,
     *,
     export_format: str = "auto",
     h5_data_key: str = "measurement/data",
@@ -735,6 +863,7 @@ def process_batch(
             pre_pad_s=pre_pad_s,
             post_pad_s=post_pad_s,
             band_hz=band_hz,
+            band_hz_fallbacks=band_hz_fallbacks,
             export_format=export_format,
             h5_data_key=h5_data_key,
             h5_time_key=h5_time_key,

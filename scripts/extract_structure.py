@@ -1,12 +1,11 @@
-"""vm-extract-struct — Extract features from segmented structure-borne HDF5 files.
+"""vm-extract-struct  Extract features from segmented structure-borne HDF5 files.
 
 Usage::
 
-    vm-extract-struct \\
-        --segments-dir all_outputs/structure \\
-        --config       configs/structure.yaml \\
-        --out-csv      outputs/structure/features.csv \\
-        --workers      4
+    vm-extract-struct `
+        --segments-dir data/raw_data_extracted_splits/structure/live `
+        --config       configs/structure.yaml `
+        --out-csv      data/features/structure/features.csv
 """
 
 from __future__ import annotations
@@ -33,8 +32,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--segments-dir", required=True, help="Root directory of segmented HDF5 files.")
     p.add_argument("--config", default="configs/structure.yaml")
     p.add_argument("--out-csv", default=None)
-    p.add_argument("--file-glob", default="**/*.h5")
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument(
+        "--file-glob",
+        default=None,
+        help="Glob pattern override. Defaults to config file_glob (fallback: **/*.h5).",
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Worker-count override. Defaults to config n_workers.",
+    )
     p.add_argument(
         "--extractor",
         default=None,
@@ -55,7 +63,7 @@ def main() -> None:
     if args.extractor is not None:
         cfg["extractor"] = args.extractor
 
-    out_csv = args.out_csv or "outputs/structure/features.csv"
+    out_csv = args.out_csv or "data/features/structure/features.csv"
 
     df = extract_structure(
         segments_dir=args.segments_dir,
@@ -64,7 +72,7 @@ def main() -> None:
         file_glob=args.file_glob,
         n_workers=args.workers,
     )
-    print(f"Extracted {len(df)} rows × {len(df.columns)} columns → {out_csv}")
+    print(f"Extracted {len(df)} rows  {len(df.columns)} columns  {out_csv}")
 
 
 if __name__ == "__main__":

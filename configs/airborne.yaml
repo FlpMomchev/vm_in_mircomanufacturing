@@ -1,11 +1,15 @@
 # configs/airborne.yaml
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Airborne acoustic feature extraction defaults.
 # Matches the validated logic in notebooks/extraction.py (192 kHz mic).
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 modality: "airborne"
 target_sr: 192000           # native mic sample rate; no resampling needed
+
+# Microphone position on the plate (mm)
+mic_x_mm: -257.0
+mic_y_mm: -40.0
 
 # Band-power features
 band_power_bands:
@@ -18,6 +22,10 @@ band_power_bands:
 machining_env_sr:   24000
 machining_hf_sr:    64000
 machining_hf_proxy: "roughness"   # "roughness" | "ae"
+
+# STFT
+nperseg: 8192
+hop_length: 2048
 
 # DWT
 dwt_wavelet:  "db8"
@@ -46,11 +54,11 @@ feature_families:
   frequency:     true
   band_power:    true
   machining:     true
-  timefrequency: true
   statistical:   true
   short_time:    true
   dwt:           true
   cwt:           true
+  timefrequency: true
 
 # Parallelism
-n_workers: 4
+n_workers: 6

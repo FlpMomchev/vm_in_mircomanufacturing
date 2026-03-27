@@ -1,6 +1,6 @@
 repos:
 
-  # ── 1. General file hygiene ────────────────────────────────────────────────
+  #  1. General file hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -10,12 +10,12 @@ repos:
       - id: check-json                 # validate JSON syntax (label_mapping etc.)
       - id: check-merge-conflict       # catch leftover <<<< markers
       - id: check-added-large-files    # block files > 500 KB by default
-        args: ["--maxkb=1000"]         # raise to 1 MB — plots in results/ are fine
+        args: ["--maxkb=1000"]         # raise to 1 MB  plots in results/ are fine
       - id: debug-statements           # catch forgotten breakpoint() / pdb
       - id: mixed-line-ending          # enforce LF (important on Windows)
         args: ["--fix=lf"]
 
-  # ── 2. Ruff — linting + import sorting ────────────────────────────────────
+  #  2. Ruff  linting + import sorting
   # Replaces flake8, isort, pyupgrade in one fast tool.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.10
@@ -24,10 +24,10 @@ repos:
         args: [--fix]                  # auto-fix safe issues (unused imports etc.)
       - id: ruff-format                # opinionated formatter (Black-compatible)
 
-  # ── 3. Notebooks — strip output before committing ─────────────────────────
+  #  3. Notebooks  strip output before committing
   # Prevents large base64-encoded plot blobs ending up in Git history.
   - repo: https://github.com/kynan/nbstripout
     rev: 0.8.1
     hooks:
       - id: nbstripout
-        files: ^notebooks/            # only strip notebooks/ — not everywhere
+        files: ^notebooks/            # only strip notebooks/  not everywhere

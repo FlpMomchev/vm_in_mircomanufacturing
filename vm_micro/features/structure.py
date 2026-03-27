@@ -1,24 +1,5 @@
-"""vm_micro.features.structure
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Structure-borne acoustic feature extractor.
-
-Reads segmented HDF5 files (produced by the splitter from raw structure-borne
-measurements), applies decimation to reduce the very-high native sample rate
-(3.125 MHz → ~3 kHz), then computes the same feature families as the airborne
-extractor — minus the airborne-specific machining proxies.
-
-Supports two extractor versions selectable via ``extractor`` in config:
-- ``"v1"`` (default): core.py functions on single-step decimated signal.
-- ``"extensive"``: StructureBorneFeatureExtractorV2 with fixed-window analysis,
-  cascade decimation to ~48.8 kHz, WPD, cepstral, and normalised features.
-
-Key differences from airborne:
-- Input format: HDF5 (``measurement/data`` + ``measurement/time_vector``)
-- Native SR: 3_125_000 Hz; decimated with ``ds_rate`` before feature extraction
-- No machining-proxy features (``families.machining = false`` in config)
-- CWT frequency range is adapted to the lower post-decimation Nyquist
-
-CLI entry point: ``vm-extract-struct``  (see scripts/extract_structure.py).
+"""
+V1/default structure feature extractor.
 """
 
 from __future__ import annotations
@@ -41,44 +22,68 @@ from .core import (
     compute_cwt_features,
     compute_dwt_features,
     compute_frequency_features,
+    compute_geometry_features,
     compute_short_time_features,
     compute_statistical_features,
     compute_time_features,
+    compute_timefrequency_features,
 )
 
 logger = get_logger(__name__)
+DEFAULT_FILE_GLOB = "**/*.h5"
+DEFAULT_N_WORKERS = 6
+DEFAULT_DS_RATE = 62.5
+DEFAULT_NPERSEG = 2048
+DEFAULT_HOP_LENGTH = 512
+DEFAULT_NATIVE_SR = 3_125_000
 
 
-def extract_one_file(
-    path: Path,
-    cfg: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Extract features from a single segmented HDF5 file.
-
-    Returns a flat dict (one feature row), or ``None`` on error.
-    """
+def extract_one_file(path: Path, cfg: dict[str, Any]) -> dict[str, Any] | None:
     try:
         h5_data_key = str(cfg.get("h5_data_key", "measurement/data"))
         h5_time_key = str(cfg.get("h5_time_key", "measurement/time_vector"))
-        ds_rate = int(cfg.get("ds_rate", 1000))
+        ds_rate = float(cfg.get("ds_rate", DEFAULT_DS_RATE))
+        if ds_rate <= 0:
+            raise ValueError(f"Invalid ds_rate={ds_rate}. Must be > 0.")
 
         y_raw, sr_native, _tv, _meta = read_measurement_h5(
-            path,
-            data_key=h5_data_key,
-            time_key=h5_time_key,
-            center_signal=True,
+            path, data_key=h5_data_key, time_key=h5_time_key, center_signal=True
         )
 
-        # Decimate to working sample rate
-        # scipy.signal.decimate applies an anti-alias filter before downsampling
-        y = decimate(y_raw.astype(np.float64), ds_rate, ftype="iir", zero_phase=True)
-        sr = max(1, sr_native // ds_rate)
+        # Cascade decimation  single-step with factor
+        y = y_raw.astype(np.float64)
+        sr = int(sr_native)
+        target_sr = max(1, int(round(float(sr_native) / ds_rate)))
+        while sr // 10 >= 2 * target_sr:
+            y = decimate(y, 10, ftype="iir", zero_phase=True)
+            sr = sr // 10
+        remaining = sr // target_sr
+        if remaining > 1:
+            y = decimate(y, remaining, ftype="iir", zero_phase=True)
+            sr = sr // remaining
 
         if len(y) < 16:
             return None
 
         families: dict[str, bool] = cfg.get("feature_families", {})
         feats: dict[str, float] = {}
+
+        _rec_root = extract_recording_root(path.stem)
+
+        _grid_xlsx = (
+            "docs/doe/Design_of_Experiment_7353.xlsx"
+            if _rec_root == "0503_4_1_7353"
+            else "docs/doe/Design_of_Experiment.xlsx"
+        )
+
+        feats.update(
+            compute_geometry_features(
+                record_name=path.stem,
+                grid_xlsx_path=_grid_xlsx,
+                mic_x_mm=cfg.get("mic_x_mm", -257.0),
+                mic_y_mm=cfg.get("mic_y_mm", -40.0),
+            )
+        )
 
         if families.get("time", True):
             feats.update(compute_time_features(y, sr))
@@ -93,10 +98,7 @@ def extract_one_file(
         if families.get("short_time", True):
             feats.update(
                 compute_short_time_features(
-                    y,
-                    sr,
-                    frame_ms=float(cfg.get("short_time_frame_ms", 10.0)),
-                    hop_ms=float(cfg.get("short_time_hop_ms", 5.0)),
+                    y, sr, frame_ms=float(cfg.get("short_time_frame_ms", 10.0))
                 )
             )
         if families.get("dwt", True):
@@ -119,7 +121,15 @@ def extract_one_file(
                     fmax=float(cfg.get("cwt_fmax", 1562.0)),
                 )
             )
-        # machining proxy intentionally omitted for structure-borne
+        if families.get("timefrequency", True):
+            feats.update(
+                compute_timefrequency_features(
+                    y,
+                    sr,
+                    nperseg=int(cfg.get("nperseg", DEFAULT_NPERSEG)),
+                    hop_length=int(cfg.get("hop_length", DEFAULT_HOP_LENGTH)),
+                )
+            )
 
         stem = path.stem
         meta: dict[str, Any] = {
@@ -129,9 +139,9 @@ def extract_one_file(
             "depth_mm": try_parse_depth_mm(stem),
             "step_idx": try_parse_step_idx(stem),
             "duration_s": float(len(y) / sr),
-            "sr_hz_native": int(cfg.get("native_sr", 3_125_000)),
+            "sr_hz_native": int(cfg.get("native_sr", DEFAULT_NATIVE_SR)),
             "sr_hz_used": int(sr),
-            "ds_rate": int(ds_rate),
+            "ds_rate": float(ds_rate),
             "file_path": str(path),
         }
         return {**meta, **feats}
@@ -141,17 +151,7 @@ def extract_one_file(
         return None
 
 
-def _extract_one_file_extensive(
-    path: Path,
-    cfg: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Extract features using StructureBorneFeatureExtractorV2.
-
-    Reads the HDF5 the same way as the standard extractor, but passes
-    the *raw* signal (before decimation) to the extensive extractor,
-    which handles its own cascade decimation and windowed feature
-    extraction internally.
-    """
+def _extract_one_file_extensive(path: Path, cfg: dict[str, Any]) -> dict[str, Any] | None:
     try:
         from .structure_extensive import StructureBorneFeatureExtractorExtensive
 
@@ -184,6 +184,20 @@ def _extract_one_file_extensive(
         ext = StructureBorneFeatureExtractorExtensive(fs_native=sr_native, **ext_kwargs)
         feats = ext.extract(y_raw.astype(np.float64))
 
+        # Geometry features (mandatory  not gated by feature_families)
+        _rec_root = extract_recording_root(path.stem)
+        _grid_xlsx = (
+            "docs/doe/Design_of_Experiment_7353.xlsx"
+            if _rec_root == "0503_4_1_7353"
+            else "docs/doe/Design_of_Experiment.xlsx"
+        )
+        feats.update(
+            compute_geometry_features(
+                record_name=path.stem,
+                grid_xlsx_path=_grid_xlsx,
+            )
+        )
+
         stem = path.stem
         meta: dict[str, Any] = {
             "modality": "structure",
@@ -208,27 +222,18 @@ def extract_structure(
     segments_dir: str | Path,
     cfg: dict[str, Any],
     out_csv: str | Path | None = None,
-    file_glob: str = "**/*.h5",
-    n_workers: int = 4,
+    file_glob: str | None = None,
+    n_workers: int | None = None,
 ) -> pd.DataFrame:
-    """Extract structure-borne features from all segments under *segments_dir*.
+    resolved_glob = str(file_glob or cfg.get("file_glob", DEFAULT_FILE_GLOB))
+    resolved_workers = int(
+        n_workers if n_workers is not None else cfg.get("n_workers", DEFAULT_N_WORKERS)
+    )
 
-    Parameters
-    ----------
-    segments_dir : Path to root of segmented HDF5 files.
-    cfg          : Loaded structure config dict.
-    out_csv      : Optional path to save the feature DataFrame as CSV.
-    file_glob    : Glob pattern relative to *segments_dir*.
-    n_workers    : Number of parallel worker processes.
-
-    Returns
-    -------
-    pd.DataFrame with one row per segment.
-    """
     segments_dir = Path(segments_dir)
-    paths = sorted(segments_dir.glob(file_glob))
+    paths = sorted(segments_dir.glob(resolved_glob))
     if not paths:
-        raise FileNotFoundError(f"No files matching {file_glob!r} under {segments_dir}")
+        raise FileNotFoundError(f"No files matching {resolved_glob!r} under {segments_dir}")
 
     version = str(cfg.get("extractor", "v1")).lower()
     extract_fn = _extract_one_file_extensive if version == "extensive" else extract_one_file
@@ -238,21 +243,33 @@ def extract_structure(
         "Structure-borne extraction [%s]: %d files (workers=%d)",
         version,
         len(paths),
-        n_workers,
+        resolved_workers,
     )
 
     rows: list[dict[str, Any]] = []
 
-    if n_workers <= 1:
+    if resolved_workers <= 1:
         for p in tqdm(paths, desc=label):
             row = extract_fn(p, cfg)
             if row is not None:
                 rows.append(row)
     else:
-        with ProcessPoolExecutor(max_workers=n_workers) as exe:
-            futures = {exe.submit(extract_fn, p, cfg): p for p in paths}
-            for fut in tqdm(as_completed(futures), total=len(futures), desc=label):
-                row = fut.result()
+        try:
+            with ProcessPoolExecutor(max_workers=resolved_workers) as exe:
+                futures = {exe.submit(extract_fn, p, cfg): p for p in paths}
+                for fut in tqdm(as_completed(futures), total=len(futures), desc=label):
+                    row = fut.result()
+                    if row is not None:
+                        rows.append(row)
+        except Exception as exc:
+            logger.warning(
+                "Multiprocessing unavailable for structure extraction (%s). "
+                "Falling back to single-worker mode.",
+                exc,
+            )
+            rows = []
+            for p in tqdm(paths, desc=f"{label} [fallback]"):
+                row = extract_fn(p, cfg)
                 if row is not None:
                     rows.append(row)
 
@@ -267,7 +284,7 @@ def extract_structure(
         out_csv.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(out_csv, index=False)
         logger.info(
-            "Saved structure-borne features to %s  (%d rows × %d cols)",
+            "Saved structure-borne features to %s  (%d rows  %d cols)",
             out_csv,
             *df.shape,
         )

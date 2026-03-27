@@ -272,7 +272,7 @@ class RegressionHead(nn.Module):
     and gives the final linear layer a bounded target, which stabilises
     training compared to an unconstrained scalar.
 
-    Architecture: embed_dim → hidden → hidden//2 → 1
+    Architecture: embed_dim  hidden  hidden//2  1
     Dropout is applied only on the first two layers; the final projection is
     kept clean so the sigmoid transform is not regularised away.
     """
@@ -295,7 +295,7 @@ class RegressionHead(nn.Module):
 
     def forward(self, embedding: torch.Tensor) -> torch.Tensor:
         raw = self.net(embedding).squeeze(-1)
-        # sigmoid maps (-inf, inf) → (0, 1); rescale to physical depth range
+        # sigmoid maps (-inf, inf)  (0, 1); rescale to physical depth range
         depth_range = self.DEPTH_MAX - self.DEPTH_MIN
         return torch.sigmoid(raw) * depth_range + self.DEPTH_MIN
 

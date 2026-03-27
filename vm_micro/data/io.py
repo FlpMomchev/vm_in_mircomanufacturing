@@ -18,9 +18,9 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Format detection
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 _AUDIO_SUFFIXES = {".flac", ".wav", ".ogg", ".aiff", ".aif"}
 _HDF5_SUFFIXES = {".h5", ".hdf5"}
@@ -36,9 +36,9 @@ def get_input_kind(path: str | Path) -> str:
     raise ValueError(f"Unsupported file extension: {suffix!r}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Audio (FLAC / WAV)
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _resample(y: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
@@ -61,9 +61,9 @@ def read_audio_mono(path: str | Path, target_sr: int | None = None) -> tuple[np.
     return y.astype(np.float32, copy=False), int(sr)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # HDF5 measurements (structure-borne)
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _infer_sr_from_time_vector(
@@ -72,7 +72,7 @@ def _infer_sr_from_time_vector(
     """Infer sample rate and jitter from a time vector."""
     tv = np.asarray(time_vector, dtype=np.float64)
     if tv.ndim != 1 or len(tv) < 2:
-        raise ValueError("time_vector must be 1-D with ≥ 2 elements")
+        raise ValueError("time_vector must be 1-D with  2 elements")
 
     dt = np.diff(tv)
     dt = dt[np.isfinite(dt) & (dt > 0)]
@@ -133,9 +133,9 @@ def read_measurement_h5(
     return y.astype(np.float32, copy=False), int(sr), tv, meta
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Unified reader
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def read_signal_auto(

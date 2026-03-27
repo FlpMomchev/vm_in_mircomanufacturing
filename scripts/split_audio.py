@@ -1,13 +1,13 @@
-"""vm-split — CLI entry point for audio/HDF5 segmentation.
+"""vm-split - CLI entry point for audio/HDF5 segmentation.
 
 Usage examples
 --------------
 Single file::
 
-    vm-split single \\
-        --input raw_data/airborne/0503_1_2_4532.flac \\
-        --out-dir all_outputs/0503_1_2_4532 \\
-        --segments-per-file 49 \\
+    vm-split single `
+        --input data/raw_data/air_borne/0503_1_2_4532.flac `
+        --out-dir data/raw_data_extracted_splits/air/0503_1_2_4532 `
+        --segments-per-file 49 `
         --band-low 2000 --band-high 5000
 
 Batch with preset::
@@ -16,12 +16,12 @@ Batch with preset::
 
 Batch with explicit args::
 
-    vm-split batch \\
-        --doe-xlsx  raw_data/Versuchsplan__Bohrungen.xlsx \\
-        --input-dir raw_data/airborne \\
-        --input-glob "*.flac" \\
-        --out-root  all_outputs \\
-        --expected-map-csv expected_map.csv \\
+    vm-split batch `
+        --doe-xlsx docs/doe/Design_of_Experiment.xlsx `
+        --input-dir data/raw_data/air_borne `
+        --input-glob "*.flac" `
+        --out-root data/raw_data_extracted_splits/air `
+        --expected-map-csv data/manifests/expected_segments.csv `
         --band-low 2000 --band-high 5000
 """
 
@@ -31,7 +31,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# ── ensure project root is importable when run directly ───────────────────────
+#  ensure project root is importable when run directly
 _HERE = Path(__file__).resolve().parent
 if str(_HERE.parent) not in sys.path:
     sys.path.insert(0, str(_HERE.parent))
@@ -45,9 +45,9 @@ logger = get_logger(__name__)
 _PRESETS_PATH = PROJECT_ROOT / "configs" / "split_presets.yaml"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Parser
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _common_args(p: argparse.ArgumentParser) -> None:
@@ -56,6 +56,18 @@ def _common_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--band-high", type=float, default=5000.0, help="Upper bound of detection band (Hz)."
+    )
+    p.add_argument(
+        "--band-fallback",
+        nargs=2,
+        type=float,
+        action="append",
+        metavar=("LOW_HZ", "HIGH_HZ"),
+        default=None,
+        help=(
+            "Optional fallback detection band [low high] in Hz. "
+            "Repeat this flag to provide multiple fallback bands."
+        ),
     )
     p.add_argument("--pre-pad-s", type=float, default=0.20)
     p.add_argument("--post-pad-s", type=float, default=0.25)
@@ -101,9 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Handlers
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _load_presets() -> dict:
@@ -126,7 +138,7 @@ def _run_single(args: argparse.Namespace) -> None:
         doe_df = load_doe(args.doe_xlsx, sheet_name=args.doe_sheet)
 
     if doe_df is None:
-        # Minimal DOE with no labels — filenames will use NA
+        # Minimal DOE with no labels  filenames will use NA
         import pandas as pd
 
         doe_df = pd.DataFrame(
@@ -145,6 +157,7 @@ def _run_single(args: argparse.Namespace) -> None:
         pre_pad_s=args.pre_pad_s,
         post_pad_s=args.post_pad_s,
         band_hz=(args.band_low, args.band_high),
+        band_hz_fallbacks=args.band_fallback,
         export_format=args.export_format,
         h5_data_key=args.h5_data_key,
         h5_time_key=args.h5_time_key,
@@ -163,7 +176,8 @@ def _run_batch(args: argparse.Namespace) -> None:
         for name, cfg in configs:
             print(
                 f"\n[{name}]  band={cfg['BAND_HZ']}  glob={cfg['INPUT_GLOB']}"
-                f"  runs={len(cfg['EXPECTED_MAP'])}"
+                f"  runs={len(cfg['EXPECTED_MAP'])}  "
+                f"fallbacks={cfg.get('BAND_HZ_FALLBACKS', [])}"
             )
 
     for name, cfg in configs:
@@ -182,13 +196,14 @@ def _run_batch(args: argparse.Namespace) -> None:
             pre_pad_s=float(cfg.get("PRE_PAD_S", 0.20)),
             post_pad_s=float(cfg.get("POST_PAD_S", 0.25)),
             band_hz=tuple(cfg.get("BAND_HZ", (args.band_low, args.band_high))),
+            band_hz_fallbacks=cfg.get("BAND_HZ_FALLBACKS", args.band_fallback),
             export_format=args.export_format,
             h5_data_key=args.h5_data_key,
             h5_time_key=args.h5_time_key,
             target_sr=args.target_sr,
         )
         print(summary.to_string())
-        print(f"\nManifest → {out_root / f'manifest_{name}.csv'}")
+        print(f"\nManifest  {out_root / f'manifest_{name}.csv'}")
 
 
 def _resolve_batch_configs(args: argparse.Namespace) -> list[tuple[str, dict]]:
@@ -208,6 +223,8 @@ def _resolve_batch_configs(args: argparse.Namespace) -> list[tuple[str, dict]]:
                 cfg["OUT_ROOT"] = args.out_root
             if args.expected_map_csv:
                 cfg["EXPECTED_MAP"] = load_expected_map_csv(args.expected_map_csv)
+            if args.band_fallback:
+                cfg["BAND_HZ_FALLBACKS"] = args.band_fallback
             configs.append((name, cfg))
         return configs
 
@@ -231,6 +248,7 @@ def _resolve_batch_configs(args: argparse.Namespace) -> list[tuple[str, dict]]:
         "INPUT_GLOB": args.input_glob,
         "OUT_ROOT": args.out_root,
         "BAND_HZ": (args.band_low, args.band_high),
+        "BAND_HZ_FALLBACKS": args.band_fallback,
         "PRE_PAD_S": args.pre_pad_s,
         "POST_PAD_S": args.post_pad_s,
         "EXPECTED_MAP": load_expected_map_csv(args.expected_map_csv),

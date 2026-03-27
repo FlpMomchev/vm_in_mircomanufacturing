@@ -85,6 +85,57 @@ class TorchLogMelFrontend(nn.Module):
         return _zscore_per_image(_power_to_db(mel)).unsqueeze(1)
 
 
+class TorchLinearSpecFrontend(nn.Module):
+    """Raw power spectrogram (linear frequency axis) with optional band crop.
+
+    Produces a (B, 1, n_freq_bins, n_time_frames) tensor, dB-scaled and
+    z-score normalised per image  same contract as TorchLogMelFrontend.
+
+    When linear_spec_fmin / linear_spec_fmax are set, only the frequency
+    bins within that range are retained (the rest are sliced off before
+    the dB conversion).  This focuses the model on the physically relevant
+    band and reduces the spatial dimension.
+    """
+
+    def __init__(self, cfg: TrainConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.register_buffer(
+            "window",
+            torch.hann_window(cfg.n_fft, periodic=True),
+            persistent=True,
+        )
+
+        # Pre-compute the frequency-bin slice
+        freqs = np.linspace(0, cfg.sample_rate / 2.0, cfg.n_fft // 2 + 1)
+        fmin = float(cfg.linear_spec_fmin)
+        fmax = (
+            float(cfg.linear_spec_fmax)
+            if cfg.linear_spec_fmax is not None
+            else cfg.sample_rate / 2.0
+        )
+        mask = (freqs >= fmin) & (freqs <= fmax)
+        indices = np.where(mask)[0]
+        if len(indices) == 0:
+            indices = np.arange(len(freqs))
+        self._bin_lo = int(indices[0])
+        self._bin_hi = int(indices[-1]) + 1  # exclusive
+
+    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
+        spec = torch.stft(
+            waveform.float(),
+            n_fft=self.cfg.n_fft,
+            hop_length=self.cfg.hop_length,
+            win_length=self.cfg.n_fft,
+            window=self.window,
+            center=False,
+            return_complex=True,
+        )
+        power = spec.abs().pow(2.0)  # (B, n_fft//2+1, T)
+        power = power[:, self._bin_lo : self._bin_hi, :]  # crop to band
+        return _zscore_per_image(_power_to_db(power)).unsqueeze(1)
+
+
 def _morl_wavefun(precision: int) -> tuple[np.ndarray, np.ndarray]:
     length = 2**precision
     x = np.linspace(-8.0, 8.0, length, dtype=np.float64)
@@ -234,6 +285,8 @@ class TorchCWTFrontend(nn.Module):
 def build_frontend(cfg: TrainConfig) -> nn.Module:
     if cfg.feature_type == "logmel":
         return TorchLogMelFrontend(cfg)
+    if cfg.feature_type == "linear_spec":
+        return TorchLinearSpecFrontend(cfg)
     if cfg.feature_type == "cwt":
         return TorchCWTFrontend(cfg)
     raise ValueError(f"Unsupported feature_type: {cfg.feature_type}")

@@ -1,24 +1,24 @@
-"""vm-fuse — Fuse predictions from multiple models into a single output.
+"""vm-fuse - Fuse predictions from multiple models into a single output.
 
-Stage 1 — intra-modality (airborne classical + DL)::
+Stage 1 - intra-modality (airborne classical + DL)::
 
-    vm-fuse intra \\
-        --classical-csv outputs/features/airborne/inference_predictions.csv \\
-        --classical-mae 0.042 \\
-        --dl-csv        outputs/dl/hybrid_spec_transformer_cls/inference_predictions.csv \\
-        --dl-mae        0.038 \\
-        --modality      airborne_ensemble \\
-        --out-dir       outputs/fusion/airborne
+    vm-fuse intra `
+        --classical-csv models/features/air/inference_predictions.csv `
+        --classical-mae 0.042 `
+        --dl-csv        models/dl/air/reg/air_spec_resnet_reg_BEST_MODEL/inference_predictions.csv `
+        --dl-mae        0.038 `
+        --modality      airborne_ensemble `
+        --out-dir       models/fusion/airborne
 
-Stage 2 — inter-modality (airborne + structure-borne)::
+Stage 2 - inter-modality (airborne + structure-borne)::
 
-    vm-fuse inter \\
-        --bundle-csvs \\
-            outputs/fusion/airborne/fusion_predictions.csv:0.040:airborne_ensemble \\
-            outputs/fusion/structure/fusion_predictions.csv:0.055:structure_ensemble \\
-        --out-dir outputs/fusion/final
+    vm-fuse inter `
+        --bundle-csvs `
+            models/fusion/airborne/fusion_predictions.csv:0.040:airborne_ensemble `
+            models/fusion/structure/fusion_predictions.csv:0.055:structure_ensemble `
+        --out-dir models/fusion/final
 
-Each ``--bundle-csvs`` entry is ``<csv_path>:<validation_mae>:<modality>`` (colon-separated).
+Each `--bundle-csvs` entry is `<csv_path>:<reference_mae>:<modality>`.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="stage", required=True)
 
-    # ── intra ─────────────────────────────────────────────────────────────────
+    #  intra
     ip = sub.add_parser("intra", help="Stage 1: fuse classical + DL for one modality.")
     ip.add_argument("--classical-csv", required=True)
     ip.add_argument("--classical-mae", required=True, type=float)
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     ip.add_argument("--out-dir", required=True)
     ip.add_argument("--min-weight", type=float, default=0.05)
 
-    # ── inter ─────────────────────────────────────────────────────────────────
+    #  inter
     fp = sub.add_parser("inter", help="Stage 2: fuse multiple modality ensembles.")
     fp.add_argument(
         "--bundle-csvs", nargs="+", required=True, help="<csv>:<mae>:<modality> triples."
@@ -110,7 +110,7 @@ def _print_summary(bundle: PredictionBundle, out_dir: str) -> None:
     print(f"Predictions  : {len(bundle.y_pred)}")
     print(f"Weights      : {[f'{w:.3f}' for w in bundle.metadata.get('weights', [])]}")
     print(f"Fused MAE    : {bundle.validation_mae:.4f} mm  (weighted avg of source MAEs)")
-    print(f"Mean σ       : {bundle.sigma.mean():.4f} mm")
+    print(f"Mean        : {bundle.sigma.mean():.4f} mm")
     if bundle.y_true is not None:
         import numpy as np
 

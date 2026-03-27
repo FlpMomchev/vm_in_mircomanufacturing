@@ -3,8 +3,8 @@
 Debug visualisations for the audio splitter.
 
 Generates two PNGs per recording:
-  <stem>__debug__core.png    — detected core segments on the envelope
-  <stem>__debug__padded.png  — final segments with padding / ramp-up deltas annotated
+  <stem>__debug__core.png     detected core segments on the envelope
+  <stem>__debug__padded.png   final segments with padding / ramp-up deltas annotated
 
 Call save_debug_plots() from process_one_file() after segmentation is done.
 """
@@ -16,7 +16,7 @@ from typing import Any
 
 import matplotlib
 
-matplotlib.use("Agg")  # non-interactive backend — safe on headless servers
+matplotlib.use("Agg")  # non-interactive backend  safe on headless servers
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -63,9 +63,9 @@ def save_debug_plots(
     return p_core, p_padded
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Internal plot helpers
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def _base_envelope_plot(dbg: dict[str, Any]) -> tuple[plt.Figure, plt.Axes]:
@@ -119,7 +119,7 @@ def _plot_padded(
     fig, ax = _base_envelope_plot(dbg)
     min_s = float(highlight_min_ms) / 1000.0
 
-    # Determine what to call "final" — prefer ramp-up-refined, fall back to padded
+    # Determine what to call "final"  prefer ramp-up-refined, fall back to padded
     segs_show = segs_s_final if segs_s_final is not None else segs_s_padded
 
     # Gold: final segments

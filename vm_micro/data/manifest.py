@@ -11,9 +11,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # DOE
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def load_doe(xlsx_path: str | Path, sheet_name: str = "DOE_run_order") -> pd.DataFrame:
@@ -25,9 +25,9 @@ def load_doe(xlsx_path: str | Path, sheet_name: str = "DOE_run_order") -> pd.Dat
     return df
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Segment manifest
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 
 def load_manifest(csv_path: str | Path) -> pd.DataFrame:
@@ -72,9 +72,9 @@ def map_segments_to_doe(doe_df: pd.DataFrame, n_segments: int) -> pd.DataFrame:
     return mapped
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Filename helpers (shared with splitter and feature extractor)
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 _SAFE_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 _DEPTH_RE = re.compile(r"depth([0-9]+(?:[.,][0-9]+)?)", flags=re.IGNORECASE)

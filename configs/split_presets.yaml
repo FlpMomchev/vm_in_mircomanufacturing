@@ -1,18 +1,20 @@
 # configs/split_presets.yaml
-# ─────────────────────────────────────────────────────────────────────────────
+#
 # Batch splitting presets for vm-split batch --preset <name>
 #
 # All paths are relative to the project root.
-# band_hz: [low, high] in Hz — detection band for the IDLE/ACTIVE state machine.
-# expected_map: stem → expected number of segments per recording.
-# ─────────────────────────────────────────────────────────────────────────────
+# band_hz: [low, high] in Hz  detection band for the IDLE/ACTIVE state machine.
+# band_hz_fallbacks: optional list of fallback bands tried in order until the
+#   expected segment count is matched or the closest candidate is selected.
+# expected_map: stem  expected number of segments per recording.
+#
 
 airborne_normalBand:
   doe_xlsx:    "docs/doe/Design_of_Experiment.xlsx"
   doe_sheet:   "DOE_run_order"
-  input_dir:   "raw_data/air_borne/normalBand"
+  input_dir:   "data/raw_data/air_borne/normalBand"
   input_glob:  "*.flac"
-  out_root:    "all_outputs/air"
+  out_root:    "data/raw_data_extracted_splits/air"
   pre_pad_s:   0.20
   post_pad_s:  0.25
   band_hz:     [2000.0, 5000.0]
@@ -49,9 +51,9 @@ airborne_normalBand:
 airborne_largerBand:
   doe_xlsx:    "docs/doe/Design_of_Experiment.xlsx"
   doe_sheet:   "DOE_run_order"
-  input_dir:   "raw_data/air_borne/largerBand"
+  input_dir:   "data/raw_data/air_borne/largerBand"
   input_glob:  "*.flac"
-  out_root:    "all_outputs/air"
+  out_root:    "data/raw_data_extracted_splits/air"
   pre_pad_s:   0.20
   post_pad_s:  0.25
   band_hz:     [100.0, 5000.0]
@@ -62,9 +64,9 @@ airborne_largerBand:
 airborne_7353:
   doe_xlsx:    "docs/doe/Design_of_Experiment_7353.xlsx"
   doe_sheet:   "DOE_run_order"
-  input_dir:   "raw_data/air_borne/audio_splits_final_normalBand_only_0503_4_1_7353"
+  input_dir:   "data/raw_data/air_borne/audio_splits_final_normalBand_only_0503_4_1_7353"
   input_glob:  "*.flac"
-  out_root:    "all_outputs/air"
+  out_root:    "data/raw_data_extracted_splits/air"
   pre_pad_s:   0.20
   post_pad_s:  0.25
   band_hz:     [2000.0, 5000.0]
@@ -74,9 +76,9 @@ airborne_7353:
 structure:
   doe_xlsx:    "docs/doe/Design_of_Experiment.xlsx"
   doe_sheet:   "DOE_run_order"
-  input_dir:   "raw_data/structure_borne"
+  input_dir:   "data/raw_data/structure_borne"
   input_glob:  "*.h5"
-  out_root:    "all_outputs/structure"
+  out_root:    "data/raw_data_extracted_splits/structure"
   pre_pad_s:   0.05
   post_pad_s:  0.05
   band_hz:     [3500.0, 5000.0]
@@ -112,9 +114,9 @@ structure:
 structure_21:
   doe_xlsx:    "docs/doe/Design_of_Experiment_7353.xlsx"
   doe_sheet:   "DOE_run_order"
-  input_dir:   "raw_data/structure_borne/21_"
+  input_dir:   "data/raw_data/structure_borne/21_"
   input_glob:  "*.h5"
-  out_root:    "all_outputs/structure"
+  out_root:    "data/raw_data_extracted_splits/structure"
   pre_pad_s:   0.05
   post_pad_s:  0.05
   band_hz:     [3500.0, 5000.0]

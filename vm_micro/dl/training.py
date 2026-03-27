@@ -50,7 +50,7 @@ def _build_scheduler(optimizer, cfg: TrainConfig, total_epochs: int) -> LambdaLR
     lr_min to the base lr set in the optimizer.  After warmup it follows a
     cosine curve down to lr_min.
 
-    The lambda receives the 0-based epoch index; we offset by 1 for readability.
+    The lambda receives the 0-based epoch index; an offset of +1 is applied for readability.
     """
     warmup = max(1, cfg.warmup_epochs)
     base_lr = cfg.lr
@@ -59,9 +59,9 @@ def _build_scheduler(optimizer, cfg: TrainConfig, total_epochs: int) -> LambdaLR
     def _lr_lambda(epoch_0based: int) -> float:
         epoch = epoch_0based + 1  # 1-based
         if epoch <= warmup:
-            # linear ramp: min_lr → base_lr
+            # linear ramp: min_lr  base_lr
             return min_lr / base_lr + (1.0 - min_lr / base_lr) * (epoch / warmup)
-        # cosine decay: base_lr → min_lr
+        # cosine decay: base_lr  min_lr
         progress = (epoch - warmup) / max(1, total_epochs - warmup)
         cosine = 0.5 * (1.0 + np.cos(np.pi * progress))
         return min_lr / base_lr + (1.0 - min_lr / base_lr) * cosine

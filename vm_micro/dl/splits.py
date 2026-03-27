@@ -94,9 +94,10 @@ def _simple_stratified_file_split(
         train_idx = train_val_idx
         val_idx = np.array([], dtype=int)
 
-    out.loc[train_idx, "split"] = "train"
-    out.loc[val_idx, "split"] = "val"
-    out.loc[test_idx, "split"] = "test"
+    split_col = out.columns.get_loc("split")
+    out.iloc[train_idx, split_col] = "train"
+    out.iloc[val_idx, split_col] = "val"
+    out.iloc[test_idx, split_col] = "test"
 
     return out.loc[out["split"].isin(["train", "val", "test"])].reset_index(drop=True)
 
