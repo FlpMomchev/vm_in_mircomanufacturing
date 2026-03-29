@@ -120,6 +120,31 @@ def test_read_measurement_h5(synthetic_h5: Path):
     assert "dt_median_s" in meta
 
 
+def test_read_measurement_h5_probe_mode_returns_short_time_vector(synthetic_h5: Path):
+    y, sr, tv, _meta = read_measurement_h5(
+        synthetic_h5,
+        read_full_time_vector=False,
+        sr_probe_samples=128,
+    )
+    assert y.ndim == 1
+    assert sr == SR
+    assert len(tv) == 128
+    assert len(tv) < len(y)
+
+
+def test_read_measurement_h5_probe_mode_with_resample(synthetic_h5: Path):
+    y, sr, tv, _meta = read_measurement_h5(
+        synthetic_h5,
+        read_full_time_vector=False,
+        sr_probe_samples=256,
+        target_sr=24_000,
+    )
+    assert sr == 24_000
+    assert len(y) > 0
+    assert len(tv) == min(256, len(y))
+    assert np.all(np.diff(tv) > 0)
+
+
 #
 # read_signal_auto  format dispatch
 #

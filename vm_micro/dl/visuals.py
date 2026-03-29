@@ -26,6 +26,15 @@ def _save_fig(fig: plt.Figure, out_path: str | Path) -> None:
     plt.close(fig)
 
 
+def _regression_pred_col(df: pd.DataFrame) -> str:
+    for col in ("y_pred", "y_pred_depth"):
+        if col in df.columns:
+            return col
+    raise KeyError(
+        "No regression prediction column found. Expected one of ['y_pred', 'y_pred_depth']."
+    )
+
+
 def save_training_overview_plots(
     file_pred_df: pd.DataFrame,
     cfg: TrainConfig,
@@ -109,8 +118,9 @@ def save_confidence_distribution_plot(file_pred_df: pd.DataFrame, out_path: str 
 
 
 def save_regression_scatter_plot(file_pred_df: pd.DataFrame, out_path: str | Path) -> None:
+    pred_col = _regression_pred_col(file_pred_df)
     y_true = file_pred_df["y_true_depth"].to_numpy()
-    y_pred = file_pred_df["y_pred_depth"].to_numpy()
+    y_pred = file_pred_df[pred_col].to_numpy()
 
     fig, ax = plt.subplots(figsize=(6.2, 6.2))
     ax.scatter(y_true, y_pred, alpha=0.85)
@@ -124,8 +134,9 @@ def save_regression_scatter_plot(file_pred_df: pd.DataFrame, out_path: str | Pat
 
 
 def save_error_by_depth_plot(file_pred_df: pd.DataFrame, out_path: str | Path) -> None:
+    pred_col = _regression_pred_col(file_pred_df)
     df = file_pred_df.copy()
-    df["abs_error"] = (df["y_true_depth"] - df["y_pred_depth"]).abs()
+    df["abs_error"] = (df["y_true_depth"] - df[pred_col]).abs()
     summary = df.groupby("y_true_depth", as_index=False)["abs_error"].mean()
 
     fig, ax = plt.subplots(figsize=(8.0, 4.2))
@@ -137,8 +148,9 @@ def save_error_by_depth_plot(file_pred_df: pd.DataFrame, out_path: str | Path) -
 
 
 def save_signed_error_by_depth_plot(file_pred_df: pd.DataFrame, out_path: str | Path) -> None:
+    pred_col = _regression_pred_col(file_pred_df)
     df = file_pred_df.copy()
-    df["signed_error"] = df["y_pred_depth"] - df["y_true_depth"]
+    df["signed_error"] = df[pred_col] - df["y_true_depth"]
     summary = df.groupby("y_true_depth", as_index=False)["signed_error"].mean()
 
     fig, ax = plt.subplots(figsize=(8.0, 4.2))
@@ -151,7 +163,8 @@ def save_signed_error_by_depth_plot(file_pred_df: pd.DataFrame, out_path: str | 
 
 
 def save_abs_error_hist_plot(file_pred_df: pd.DataFrame, out_path: str | Path) -> None:
-    err = np.abs(file_pred_df["y_true_depth"].to_numpy() - file_pred_df["y_pred_depth"].to_numpy())
+    pred_col = _regression_pred_col(file_pred_df)
+    err = np.abs(file_pred_df["y_true_depth"].to_numpy() - file_pred_df[pred_col].to_numpy())
     fig, ax = plt.subplots(figsize=(7.0, 4.2))
     ax.hist(err, bins=16)
     ax.set_xlabel("Absolute error [mm]")
@@ -190,8 +203,15 @@ def save_attention_maps_for_examples(
 
     out_dir = _safe_plot_dir(out_dir)
     df = file_pred_df.copy()
-    if "y_pred_depth" in df.columns:
-        df["selection_score"] = (df["y_true_depth"] - df["y_pred_depth"]).abs()
+    pred_col = None
+    if "y_pred_class" not in df.columns:
+        try:
+            pred_col = _regression_pred_col(df)
+        except KeyError:
+            pred_col = None
+
+    if pred_col is not None:
+        df["selection_score"] = (df["y_true_depth"] - df[pred_col]).abs()
         picks = pd.concat(
             [
                 df.nsmallest(max(1, n_examples // 2), "selection_score"),
@@ -256,8 +276,8 @@ def save_attention_maps_for_examples(
         ax.imshow(spec, aspect="auto", origin="lower")
         ax.imshow(attn_img, aspect="auto", origin="lower", alpha=0.35)
         title = f"file_id={file_id} | true={row['y_true_depth']:.3f}"
-        if "y_pred_depth" in row:
-            title += f" | pred={row['y_pred_depth']:.3f}"
+        if pred_col is not None and pred_col in row.index:
+            title += f" | pred={row[pred_col]:.3f}"
         ax.set_title(title)
         ax.set_xlabel("Time bins")
         ax.set_ylabel("Mel bins")

@@ -72,7 +72,7 @@ def _infer_sr_from_time_vector(
     """Infer sample rate and jitter from a time vector."""
     tv = np.asarray(time_vector, dtype=np.float64)
     if tv.ndim != 1 or len(tv) < 2:
-        raise ValueError("time_vector must be 1-D with  2 elements")
+        raise ValueError("time_vector must be 1-D with >= 2 elements")
 
     dt = np.diff(tv)
     dt = dt[np.isfinite(dt) & (dt > 0)]
@@ -92,6 +92,8 @@ def read_measurement_h5(
     time_key: str = "measurement/time_vector",
     center_signal: bool = True,
     target_sr: int | None = None,
+    read_full_time_vector: bool = True,
+    sr_probe_samples: int = 4096,
 ) -> tuple[np.ndarray, int, np.ndarray, dict[str, Any]]:
     """Read one HDF5 measurement file.
 
@@ -100,12 +102,19 @@ def read_measurement_h5(
     y : float32 1-D array
     sr : int
     time_vector : float64 1-D array
+        Full vector by default; probe-sized when ``read_full_time_vector=False``.
     meta : dict  (dt_median_s, relative_time_jitter, data_key, time_key)
     """
     path = Path(path)
     with h5py.File(path, "r") as fh:
         data = fh[data_key][:]
-        time_vector = fh[time_key][:]
+        tv_ds = fh[time_key]
+        if read_full_time_vector:
+            time_vector = tv_ds[:]
+        else:
+            n_probe = int(max(2, sr_probe_samples))
+            n_probe = min(n_probe, int(tv_ds.shape[0]))
+            time_vector = tv_ds[:n_probe]
 
     y = np.asarray(data, dtype=np.float32)
     if y.ndim != 1:
@@ -119,7 +128,12 @@ def read_measurement_h5(
     tv = np.asarray(time_vector, dtype=np.float64)
     if target_sr is not None and target_sr != sr:
         y = _resample(y, sr, int(target_sr))
-        tv = np.arange(len(y), dtype=np.float64) / float(target_sr)
+        if read_full_time_vector:
+            tv = np.arange(len(y), dtype=np.float64) / float(target_sr)
+        else:
+            n_probe = int(max(2, sr_probe_samples))
+            n_probe = min(n_probe, len(y))
+            tv = np.arange(n_probe, dtype=np.float64) / float(target_sr)
         sr = int(target_sr)
         dt_median = 1.0 / float(sr)
         jitter = 0.0

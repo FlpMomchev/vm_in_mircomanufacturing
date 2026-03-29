@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vm-infer", description="Run depth prediction inference.")
     sub = p.add_subparsers(dest="mode", required=True)
 
-    #  classical
+    # Classical
     cp = sub.add_parser("classical", help="Classical ML inference.")
     cp.add_argument("--bundle", required=True, help="Path to best_model_bundle.joblib.")
     cp.add_argument(
@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override DOE step (mm) used for snapping, e.g. 0.05 for half-steps.",
     )
 
-    #  DL
+    # DL
     dp = sub.add_parser("dl", help="DL model inference.")
     dp.add_argument("--model-dir", required=True, help="Training output dir or final_model dir.")
     dp.add_argument(
@@ -97,7 +97,7 @@ def _infer_classical(args: argparse.Namespace) -> None:
         snap_predictions=(False if args.no_snap else None),
         doe_step_mm=args.snap_step,
     )
-    print(f"Predictions: {len(df)} rows  {out_csv}")
+    print(f"Predictions: {len(df)} rows {out_csv}")
     if "depth_mm" in df.columns:
         import numpy as np
 
@@ -169,22 +169,22 @@ def _infer_dl(args: argparse.Namespace) -> None:
 
     out_csv = args.out_csv or str(model_dir / "inference_predictions.csv")
     file_pred.to_csv(out_csv, index=False)
-    print(f"Predictions: {len(file_pred)} files  {out_csv}")
+    print(f"Predictions: {len(file_pred)} files {out_csv}")
 
     if "y_true_depth" in file_pred.columns:
         import numpy as np
 
-    if "y_pred_depth" in file_pred.columns:
-        pred_col = "y_pred_depth"
-    elif "y_pred" in file_pred.columns:
-        pred_col = "y_pred"
-    else:
-        raise KeyError(
-            f"No prediction column found in DL inference output: {list(file_pred.columns)}"
-        )
+        if "y_pred_depth" in file_pred.columns:
+            pred_col = "y_pred_depth"
+        elif "y_pred" in file_pred.columns:
+            pred_col = "y_pred"
+        else:
+            raise KeyError(
+                f"No prediction column found in DL inference output: {list(file_pred.columns)}"
+            )
 
-    mae = float(np.mean(np.abs(file_pred[pred_col] - file_pred["y_true_depth"])))
-    print(f"MAE vs ground truth: {mae:.4f} mm")
+        mae = float(np.mean(np.abs(file_pred[pred_col] - file_pred["y_true_depth"])))
+        print(f"MAE vs ground truth: {mae:.4f} mm")
 
 
 def main() -> None:

@@ -108,10 +108,10 @@ def build_file_table(
     """Scan a directory and build the file-level metadata table.
 
     Supports both FLAC/WAV (airborne) and HDF5 (structure-borne) files.
-    The file_glob determines which format is scanned  use ``**/*.flac``
+    The file_glob determines which format is scanned; use ``**/*.flac``
     for airborne or ``**/*.h5`` for structure-borne.
 
-    Metadata is used for splitting and analysis only  it is never fed
+    Metadata is used for splitting and analysis only; it is never fed
     into the model.
     """
     data_dir = Path(data_dir)

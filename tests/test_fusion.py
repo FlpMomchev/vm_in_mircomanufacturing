@@ -151,12 +151,45 @@ def test_save_and_reload_report(tmp_path: Path):
 
     assert (tmp_path / "fusion_predictions.csv").exists()
     assert (tmp_path / "fusion_report.json").exists()
+    assert (tmp_path / "fusion_setup.json").exists()
 
     with open(tmp_path / "fusion_report.json") as fh:
         report = json.load(fh)
     assert report["modality"] == "airborne_ensemble"
     assert report["n_predictions"] == len(_RECORDS)
-    assert "holdout_mae" in report  # y_true was provided
+    assert report["n_with_ground_truth"] == len(_RECORDS)
+    assert report["batch_mae_mm"] is not None  # y_true was provided
+    assert report["batch_rmse_mm"] is not None
+
+    with open(tmp_path / "fusion_setup.json") as fh:
+        setup = json.load(fh)
+    assert setup["modality"] == "airborne_ensemble"
+    assert setup["reference_mae_for_weighting_mm"] == 0.04
+
+
+def test_fused_report_includes_source_batch_metrics(tmp_path: Path):
+    cls_b = _make_bundle("airborne_classical", val_mae=0.060)
+    dl_b = _make_bundle("airborne_dl", val_mae=0.045)
+    fused = fuse_intra_modality(cls_b, dl_b, "airborne_ensemble")
+    save_fusion_report(fused, tmp_path)
+
+    with open(tmp_path / "fusion_report.json", encoding="utf-8") as fh:
+        report = json.load(fh)
+    assert "source_batch_metrics" in report
+    assert len(report["source_batch_metrics"]) == 2
+    assert {item["modality"] for item in report["source_batch_metrics"]} == {
+        "airborne_classical",
+        "airborne_dl",
+    }
+    for item in report["source_batch_metrics"]:
+        assert "mae_mm" in item
+        assert "rmse_mm" in item
+
+    with open(tmp_path / "fusion_setup.json", encoding="utf-8") as fh:
+        setup = json.load(fh)
+    assert setup["weighting_method"] == "inverse_reference_mae_with_floor"
+    assert len(setup["weights"]) == 2
+    assert len(setup["source_reference_maes_mm"]) == 2
 
 
 def test_load_bundle_from_csv(tmp_path: Path):

@@ -2,7 +2,7 @@
 
 Virtual metrology pipeline for micro-drilling depth prediction from acoustic sensing (airborne + structure-borne), with classical ML, deep learning, and multi-stage fusion.
 
-## Current Status (2026-03-28)
+## Current Status (2026-03-29)
 
 - The full pipeline is implemented end-to-end:
   - split raw recordings into per-hole segments
@@ -22,13 +22,10 @@ Virtual metrology pipeline for micro-drilling depth prediction from acoustic sen
 ```text
 vm_in_micromanufacturing/
   configs/
-    paths.yaml
     split_presets.yaml
     airborne.yaml
     structure.yaml
-    dl.yaml
     fusion.yaml
-    predict_fused.yaml
 
   vm_micro/
     data/
@@ -71,7 +68,7 @@ vm_in_micromanufacturing/
     train_dl.py         # vm-train-dl
     infer.py            # vm-infer
     fuse.py             # vm-fuse
-    predict_fused.py    # vm-predict-fused
+    final_prediction.py # vm-predict-fused
 
   docs/doe/
   data/
@@ -100,7 +97,7 @@ Metrics below are taken from the current artifact files in this repository.
 | Component | Artifact | mean_test_mae (mm) | mean_test_rmse (mm) | mean_test_r2 |
 |---|---|---:|---:|---:|
 | Airborne SpecResNet (`BEST_MODEL`) | `models/dl/air/reg/air_spec_resnet_reg_BEST_MODEL/repeat_metrics_summary.json` | 0.0182 | 0.0799 | 0.9167 |
-| Structure SpecResNet (`96k_retry`) | `models/dl/structure/reg/structure_spec_resnet_reg_96k_retry/repeat_metrics_summary.json` | 0.1395 | 0.1762 | 0.6310 |
+| Structure SpecResNet (`linear_spec_FINAL`) | `models/dl/structure/reg/linear_spec_res_net_FINAL/repeat_metrics_summary.json` | 0.1362 | 0.1762 | 0.6310 |
 
 ### Fusion (labeled benchmark subset, n=18)
 
@@ -110,7 +107,7 @@ Metrics below are taken from the current artifact files in this repository.
 | Structure intra-fusion | `models/fusion/structure/fusion_report.json` | 0.0104 | 0.0122 |
 | Final inter-modality fusion | `models/fusion/final/fusion_report.json` | **0.0090** | 0.0125 |
 
-Note: many files in `models/fusion/live_runs/**` are unlabeled production-style runs; holdout metrics there can be `0.0` because no ground truth is available.
+Note: many files in `data/fusion_results/**` are unlabeled production-style runs; holdout metrics there can be `0.0` because no ground truth is available.
 
 ## Installation
 
@@ -170,7 +167,7 @@ vm-extract-air \
   --config configs/airborne.yaml \
   --out-csv data/features/airborne/features.csv
 
-# Structure-borne (default extractor from configs/structure.yaml is "extensive")
+# Structure-borne (default extractor from configs/structure.yaml is "v2")
 vm-extract-struct \
   --segments-dir data/raw_data_extracted_splits/structure \
   --config configs/structure.yaml \
@@ -210,12 +207,14 @@ vm-train-cls \
 vm-train-dl \
   --data-dir data/raw_data_extracted_splits/air \
   --output-dir models/dl/air/reg/air_spec_resnet_reg_BEST_MODEL \
+  --modality airborne \
   --task regression
 
 # Structure
 vm-train-dl \
   --data-dir data/raw_data_extracted_splits/structure \
   --output-dir models/dl/structure/reg/structure_spec_resnet_reg_96k_retry \
+  --modality structure \
   --file-glob "**/*.h5" \
   --task regression \
   --model-type spec_resnet
@@ -258,10 +257,38 @@ vm-fuse inter \
 ### 8) One-shot fused prediction from raw files
 
 ```bash
-vm-predict-fused --config configs/predict_fused.yaml
+vm-predict-fused --config configs/fusion.yaml
 ```
 
-This command scans configured raw folders, splits new files, runs modality inference, fuses outputs, and writes run artifacts to `models/fusion/live_runs/<timestamp>__<tag>/`.
+This command scans configured raw folders, splits new files, runs modality inference, fuses outputs, and writes run artifacts to `data/fusion_results/<timestamp>__<tag>/`.
+
+Current run layout:
+
+```text
+data/fusion_results/<timestamp>__<tag>/
+  airborne/
+    classical_predictions.csv
+    dl_predictions.csv
+    features_airborne.csv
+    fusion_predictions.csv
+    <recording_stem>/segments_manifest.csv
+  structure/
+    classical_predictions.csv
+    dl_predictions.csv
+    features_structure.csv
+    fusion_predictions.csv
+    <recording_stem>/segments_manifest.csv
+  final/
+    final_predictions.csv
+    batch_quality_report.json
+    setup_audit.json
+    apples_to_apples_report.json
+    model_setup_locks/
+      <timestamp>__<tag>_setup_lock.json
+      LATEST_setup_lock.json
+```
+
+Per-modality run outputs are intentionally CSV-only (plus segment manifests), while batch-level reports are grouped under `final/`.
 
 ## Fusion Architecture
 
@@ -275,7 +302,7 @@ airborne FLAC segments
        vm-fuse intra -> airborne_ensemble (w_cls, w_dl from inverse-MAE)
 
 structure HDF5 segments
-   vm-extract-struct (--extractor v1|extensive) -> features.csv
+   vm-extract-struct (--extractor v1|v2) -> features.csv
         vm-select (--min-partial-r 0.15) -> features_selected.csv
               vm-train-cls -> structure_classical bundle
    vm-train-dl -> structure_dl bundle
@@ -297,10 +324,10 @@ The fusion module is self-contained in `vm_micro/fusion/fuser.py` and can be swa
 | Change feature extraction parameters | `configs/airborne.yaml` or `configs/structure.yaml` |
 | Add a new classical model | `vm_micro/classical/trainer.py` -> `make_model_specs()` |
 | Add a new DL architecture | `vm_micro/dl/models.py` + register in `vm_micro/dl/frontends.py` |
-| Change DL hyperparameters | `configs/dl.yaml` (all keys overridable via CLI) |
+| Change DL hyperparameters | `configs/airborne.yaml` or `configs/structure.yaml` (`dl` section; all keys overridable via CLI) |
 | Change fusion strategy | `vm_micro/fusion/fuser.py` -> `_fuse()` |
 | Add or edit a batch split preset | `configs/split_presets.yaml` |
-| Switch structure extractor | CLI `--extractor extensive` or `extractor: extensive` in `configs/structure.yaml` |
+| Switch structure extractor | CLI `--extractor v1` / `--extractor v2` (legacy `extensive` still works) or set `extractor` in `configs/structure.yaml` |
 | Filter duration proxies from features | `vm-select --min-partial-r 0.15` |
 
 ## Testing

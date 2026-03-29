@@ -39,10 +39,11 @@ Thumbs.db
 *.env
 
 # Local data (never commit raw/split/generated data)
-data/raw_data/
-data/raw_data_extracted_splits/
-data/features/
-models/
+data/*
+models/*
+
+docs/doe/Experiment_DOE.pdf
+docs/doe/Experiment_DOE.xlsx
 
 # Training/inference tooling output
 catboost_info*/

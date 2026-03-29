@@ -7,7 +7,7 @@ Algorithm
 1. Compute a 25 kHz band-power envelope (configurable via ``band_hz``).
 2. Estimate a slow-drift baseline with an asymmetric EMA (resists being
    pulled up by long active plateaus).
-3. Run an IDLE  ACTIVE  IDLE state machine on ``envelope  baseline``
+3. Run an IDLE -> ACTIVE -> IDLE state machine on ``envelope - baseline``
    with hysteresis and minimum-persistence guards.
 4. Post-process: split merged segments, merge chattering gaps, drop spikes.
 5. Refine segment edges with a relaxed look-back / look-ahead pass.
@@ -730,7 +730,7 @@ def process_one_file(
             int(expected_segments),
         )
 
-    #  debug plots
+    # Debug plots
     p_core, p_pad = save_debug_plots(
         dbg,
         segs_s,

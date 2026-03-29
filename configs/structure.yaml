@@ -1,58 +1,195 @@
 # configs/structure.yaml
-# Structure-borne acoustic feature extraction defaults.
+# Combined structure-borne configuration:
+# - classical: feature extraction settings
+# - dl: deep-learning training settings
 
 modality: "structure"
 
-# Geometry context (mm)
-mic_x_mm: -257.0
-mic_y_mm: -40.0
+classical:
+  # Structure-borne acoustic feature extraction defaults.
 
-# Native sensor sample rate (Hz)
-native_sr: 3125000
+  # Geometry context (mm)
+  mic_x_mm: -257.0
+  mic_y_mm: -40.0
 
-# Downsample factor applied via scipy.signal.decimate.
-# 3_125_000 / 62.5 ~= 50 kHz.
-ds_rate: 62.5
+  # Legacy reference native SR (Hz). Runtime extraction reads native SR from each H5.
+  native_sr: 781250
 
-# HDF5 dataset keys
-h5_data_key: "measurement/data"
-h5_time_key: "measurement/time_vector"
+  # Downsample factors by extractor generation.
+  # v1 uses direct scalar decimation target_sr = native_sr / ds_rate_v1.
+  # v2 (aka "extensive") uses integer cascade decimation derived from ds_rate_v2
+  # unless ext_ds_stages is explicitly set.
+  # Optional runtime override: target_sr_hz forces adaptive decimate+resample
+  # from the file's native SR to a model-aligned SR (used by vm-predict-fused).
+  ds_rate_v1: 62.5
+  ds_rate_v2: 64
 
-# File selection
-file_glob: "**/*.h5"
+  # HDF5 dataset keys
+  h5_data_key: "measurement/data"
+  h5_time_key: "measurement/time_vector"
 
-# Default extractor variant used by vm_micro.features.structure.extract_structure
-# Valid values: "v1", "extensive"
-extractor: "extensive"
+  # File selection
+  file_glob: "**/*.h5"
 
-# STFT parameters (at downsampled rate)
-stft_window: "hann"
-nperseg: 2048
-hop_length: 512
-short_time_frame_ms: 10.0
+  # Default extractor variant used by vm_micro.features.structure.extract_structure
+  # Valid values: "v1", "v2" ("extensive" is supported as alias)
+  extractor: "v2"
 
-# CWT
-cwt_wavelet: "morl"
-cwt_num_scales: 64
-cwt_fmin: 50.0
-cwt_fmax: 1562.0
+  # STFT parameters (at downsampled rate)
+  stft_window: "hann"
+  nperseg: 2048
+  hop_length: 512
+  short_time_frame_ms: 10.0
 
-# DWT
-dwt_wavelet: "sym8"
-dwt_level: 5
-dwt_padding_mode: "constant"
+  # CWT
+  cwt_wavelet: "morl"
+  cwt_num_scales: 64
+  cwt_fmin: 50.0
+  cwt_fmax: 1562.0
 
-# Feature families (aligned with airborne naming)
-feature_families:
-  time: true
-  frequency: true
-  band_power: true
-  machining: false
-  statistical: true
-  short_time: true
-  dwt: true
-  cwt: true
-  timefrequency: true
+  # DWT
+  dwt_wavelet: "sym8"
+  dwt_level: 5
+  dwt_padding_mode: "constant"
 
-# Parallelism
-n_workers: 6
+  # Feature families (aligned with airborne naming)
+  feature_families:
+    time: true
+    frequency: true
+    band_power: true
+    machining: false
+    statistical: true
+    short_time: true
+    dwt: true
+    cwt: true
+    timefrequency: true
+
+  # Optional v1 machining family controls (used only when feature_families.machining=true)
+  machining_env_sr: 24000
+  machining_hf_sr: 64000
+  machining_hf_proxy: "roughness"
+
+  # v2 / extensive extractor controls (used when extractor: "v2")
+  # If null, ext_ds_stages is derived from ds_rate_v2.
+  ext_ds_stages: null
+  ext_window_s: 0.050
+  ext_hop_s: 0.025
+  ext_wpd_wavelet: "db4"
+  ext_wpd_level: 5
+  ext_n_mfcc: 13
+  ext_n_filters: 26
+  ext_f_min_cepstral: 50.0
+  ext_cwt_wavelet: "morl"
+  ext_cwt_n_scales: 32
+  ext_cwt_f_min: 100.0
+  ext_bands:
+    - [10.0, 500.0]
+    - [500.0, 2000.0]
+    - [2000.0, 5000.0]
+    - [5000.0, 10000.0]
+    - [10000.0, 25000.0]
+  ext_complexity_n_samples: 5000
+  ext_sampen_m: 2
+  ext_sampen_r_factor: 0.2
+  ext_permen_order: 5
+  ext_permen_delay: 1
+
+  # Parallelism
+  n_workers: 6
+
+dl:
+  # Synced to deployed inference model:
+  # models/dl/structure/reg/structure_spec_resnet_reg_96k_retry/final_model/config.json
+  # Task / architecture
+  task: "regression"
+  feature_type: "logmel"
+  model_type: "spec_resnet"
+
+  # Data scan
+  file_glob: "**/*.h5"
+
+  # Audio windowing
+  sample_rate: 96000
+  window_sec: 0.50
+  window_hop_sec: 0.25
+
+  # Log-Mel STFT
+  n_fft: 4096
+  hop_length: 1024
+  n_mels: 128
+  fmin: 100.0
+  fmax: 20000.0
+
+  # Linear spectrogram frontend
+  linear_spec_fmin: 0.0
+  linear_spec_fmax: null
+
+  # CWT frontend
+  cwt_wavelet: "morl"
+  cwt_num_scales: 64
+  cwt_fmin: 200.0
+  cwt_fmax: 20000.0
+  cwt_precision: 10
+
+  # Training loop
+  batch_size: 32
+  epochs: 80
+  lr: 7.0e-4
+  weight_decay: 2.0e-4
+  patience: 12
+
+  # Data loading
+  num_workers: 4
+  prefetch_factor: 2
+  persistent_workers: true
+  pin_memory: true
+
+  # Reproducibility
+  seed: 42
+  min_windows_per_file: 1
+  max_windows_per_file_train: null
+
+  # Hardware
+  cache_audio: true
+  use_amp: false
+  device: "cuda"
+  channels_last: false
+  torch_compile: false
+
+  # Regression
+  rounding_step_mm: 0.1
+
+  # Model controls
+  backbone_embed_dim: 128
+  transformer_layers: 2
+  transformer_token_grid_size: 8
+  dropout: 0.10
+
+  # SpecAugment
+  specaugment_time_masks: 0
+  specaugment_time_width: 8
+  specaugment_freq_masks: 0
+  specaugment_freq_width: 12
+
+  # LR schedule and clipping
+  warmup_epochs: 3
+  lr_min: 1.0e-5
+  grad_clip: 1.0
+
+  # Diagnostics
+  save_training_plots: true
+  save_attention_maps: true
+  attention_examples: 4
+
+  # Split strategy
+  split_strategy: "stratified_random"
+  evaluation_unit: "file"
+  group_mode: "recording_root"
+  train_fraction: 0.75
+  val_fraction: 0.15
+  test_fraction: 0.10
+
+  # Experiment orchestration
+  n_repeats: 5
+  run_final_model: true
+  final_epochs: null

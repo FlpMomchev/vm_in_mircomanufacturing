@@ -1,7 +1,9 @@
 """vm-train-dl - Train the deep-learning depth prediction model.
 
 Config-driven: all hyperparameters, split fractions, repeat count, and
-final-model behaviour live in configs/dl.yaml. The CLI stays minimal.
+final-model behaviour live in the selected modality config
+(configs/airborne.yaml or configs/structure.yaml, under the dl section).
+The CLI stays minimal.
 
 Usage
 -----
@@ -45,6 +47,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE.parent) not in sys.path:
@@ -81,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="vm-train-dl",
         description="Train the DL depth prediction model. "
-        "Hyperparameters are read from configs/dl.yaml.",
+        "Hyperparameters are read from the selected modality config (dl section).",
     )
     # Required
     p.add_argument(
@@ -136,8 +139,15 @@ def build_parser() -> argparse.ArgumentParser:
     # Config path
     p.add_argument(
         "--config",
-        default="configs/dl.yaml",
-        help="Path to DL YAML config (default: configs/dl.yaml).",
+        default=None,
+        help="Path to modality config (airborne.yaml/structure.yaml). "
+        "Defaults to the modality inferred from --data-dir.",
+    )
+    p.add_argument(
+        "--modality",
+        choices=["airborne", "structure"],
+        default=None,
+        help="Modality to select default config when --config is omitted.",
     )
 
     # Final-model control
@@ -176,9 +186,54 @@ def _auto_file_glob(data_dir: str) -> str:
     return "**/*.flac"
 
 
+def _infer_modality_from_data_dir(data_dir: str) -> str | None:
+    tokens = [tok for tok in Path(data_dir).as_posix().lower().split("/") if tok]
+    if any(tok in {"air", "airborne"} for tok in tokens):
+        return "airborne"
+    if any(tok in {"structure", "struct"} for tok in tokens):
+        return "structure"
+    return None
+
+
+def _default_modality_config_path(modality: str | None) -> str | None:
+    if modality == "airborne":
+        return "configs/airborne.yaml"
+    if modality == "structure":
+        return "configs/structure.yaml"
+    return None
+
+
+def _resolve_dl_section(cfg_raw: dict[str, Any], config_path: str) -> dict[str, Any]:
+    """Resolve DL config from combined modality config or flat legacy config."""
+    if "dl" in cfg_raw:
+        dl_cfg = cfg_raw["dl"]
+        if not isinstance(dl_cfg, dict):
+            raise TypeError(
+                f"Invalid 'dl' section in {config_path}: expected dict, got {type(dl_cfg).__name__}"
+            )
+        return dl_cfg
+
+    if "classical" in cfg_raw and "dl" not in cfg_raw:
+        raise ValueError(
+            f"Config {config_path} contains 'classical' but no 'dl' section. "
+            "Expected combined modality config."
+        )
+
+    return cfg_raw
+
+
 def _build_cfg(args: argparse.Namespace) -> TrainConfig:
     """Load YAML, apply CLI overrides, and build TrainConfig."""
-    cfg_dict = load_config(args.config)
+    inferred_modality = args.modality or _infer_modality_from_data_dir(args.data_dir)
+    config_path = args.config or _default_modality_config_path(inferred_modality)
+    if config_path is None:
+        raise ValueError(
+            "Could not infer modality from --data-dir. Pass --modality or --config explicitly."
+        )
+
+    logger.info("Using DL config from %s", config_path)
+    cfg_raw = load_config(config_path)
+    cfg_dict = _resolve_dl_section(cfg_raw, config_path)
 
     # CLI flag overrides (only when explicitly set)
     if args.task is not None:
@@ -303,7 +358,8 @@ def main() -> None:
             # --final-only: must have explicit epochs
             if final_epochs_cfg is None:
                 raise ValueError(
-                    "--final-only requires either final_epochs set in dl.yaml "
+                    "--final-only requires either final_epochs set in the selected "
+                    "modality config (dl section) "
                     "or a 'final_epochs=N' override."
                 )
             n_final = final_epochs_cfg

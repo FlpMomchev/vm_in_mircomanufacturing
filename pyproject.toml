@@ -62,7 +62,7 @@ vm-train-cls = "scripts.train_classical:main"
 vm-train-dl  = "scripts.train_dl:main"
 vm-infer     = "scripts.infer:main"
 vm-fuse      = "scripts.fuse:main"
-vm-predict-fused = "scripts.predict_fused:main"
+vm-predict-fused = "scripts.final_prediction:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

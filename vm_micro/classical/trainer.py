@@ -579,6 +579,35 @@ def _read_features_csv(path: str | Path) -> tuple[pd.DataFrame, Path]:
     return pd.read_csv(csv_path), csv_path
 
 
+def _features_sidecar_path(csv_path: Path) -> Path:
+    return Path(str(csv_path) + ".extractor_config.json")
+
+
+def _safe_read_json_dict(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _load_feature_extraction_sidecar(
+    features_csv_path: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None]:
+    sidecar_path = _features_sidecar_path(features_csv_path)
+    payload = _safe_read_json_dict(sidecar_path)
+    if payload is None:
+        return None, None, None
+
+    effective_cfg = payload.get("effective_extraction_config")
+    if not isinstance(effective_cfg, dict):
+        effective_cfg = None
+    return payload, effective_cfg, sidecar_path
+
+
 def _resolve_split_fractions(
     *, train_fraction: float | None, val_fraction: float, test_fraction: float
 ) -> tuple[float, float, float]:
@@ -1110,6 +1139,9 @@ def train_classical(
         raise ValueError("ensemble_top_n must be >= 1")
 
     df, features_csv_path = _read_features_csv(features_csv)
+    feature_extraction_sidecar, feature_extraction_config, feature_extraction_sidecar_path = (
+        _load_feature_extraction_sidecar(features_csv_path)
+    )
     if GROUP_COL not in df.columns:
         raise ValueError(f"Expected '{GROUP_COL}' column in features CSV.")
     feat_cols = _feature_cols(df)
@@ -1117,6 +1149,14 @@ def train_classical(
         raise ValueError("No numeric feature columns found in features CSV.")
 
     logger.info("Loaded %d rows  %d features from %s", len(df), len(feat_cols), features_csv_path)
+    if feature_extraction_sidecar_path is not None:
+        logger.info("Loaded extraction sidecar from %s", feature_extraction_sidecar_path)
+    else:
+        logger.warning(
+            "No extraction sidecar found next to features CSV (%s). "
+            "Downstream config replay may be partial.",
+            features_csv_path,
+        )
     logger.info(
         "Preset=%s | n_iter=%d | use_cuda=%s | ensemble_top_n=%d | skip_slow=%s",
         preset,
@@ -1397,9 +1437,9 @@ def train_classical(
     n_uncertainty_groups = int(pd.Series(train_val_groups).nunique())
     if n_uncertainty_groups >= 2:
         fold_pred_matrix: list[np.ndarray] = []
-        X_train_val = train_val_df[feat_cols].to_numpy(dtype=np.float64)
+        X_train_val = _align_frame_to_features(train_val_df, feat_cols)[feat_cols]
         y_train_val = train_val_df[TARGET_COL].to_numpy(dtype=np.float64)
-        X_test = _align_frame_to_features(test_df, feat_cols)[feat_cols].to_numpy(dtype=np.float64)
+        X_test = _align_frame_to_features(test_df, feat_cols)[feat_cols]
         outer_cv = GroupKFold(n_splits=min(outer_max_splits, n_uncertainty_groups))
         for tr_idx, _ in outer_cv.split(X_train_val, y_train_val, train_val_groups):
             refit_search = fit_model_on_train(
@@ -1506,6 +1546,13 @@ def train_classical(
                 "record_col": RECORD_COL,
                 "ensemble_metrics": ensemble_metrics_json,
                 "ensemble_external_holdout_metrics": ensemble_external_holdout_metrics_json,
+                "feature_extraction_config": feature_extraction_config,
+                "feature_extraction_sidecar": feature_extraction_sidecar,
+                "feature_extraction_sidecar_path": (
+                    str(feature_extraction_sidecar_path)
+                    if feature_extraction_sidecar_path is not None
+                    else None
+                ),
             },
             final_dir / "ensemble_model_bundle.joblib",
         )
@@ -1540,6 +1587,13 @@ def train_classical(
         "ensemble_metrics": ensemble_metrics_json,
         "ensemble_external_holdout_metrics": ensemble_external_holdout_metrics_json,
         "use_cuda": use_cuda,
+        "feature_extraction_config": feature_extraction_config,
+        "feature_extraction_sidecar": feature_extraction_sidecar,
+        "feature_extraction_sidecar_path": (
+            str(feature_extraction_sidecar_path)
+            if feature_extraction_sidecar_path is not None
+            else None
+        ),
     }
     bundle_path = final_dir / "best_model_bundle.joblib"
     joblib.dump(bundle, bundle_path)
@@ -1585,6 +1639,12 @@ def train_classical(
         "post_selection_grouped_oof_metrics": train_oof_metrics,
         "ensemble_metrics": ensemble_metrics_json,
         "ensemble_external_holdout_metrics": ensemble_external_holdout_metrics_json,
+        "feature_extraction_config": feature_extraction_config,
+        "feature_extraction_sidecar_path": (
+            str(feature_extraction_sidecar_path)
+            if feature_extraction_sidecar_path is not None
+            else None
+        ),
     }
     with open(final_dir / "best_model_metadata.json", "w", encoding="utf-8") as fh:
         json.dump(metadata, fh, indent=2)
@@ -1611,6 +1671,12 @@ def train_classical(
         "target_mae": float(target_mae),
         "doe_step": float(doe_step),
         "random_state": int(random_state),
+        "feature_extraction_config": feature_extraction_config,
+        "feature_extraction_sidecar_path": (
+            str(feature_extraction_sidecar_path)
+            if feature_extraction_sidecar_path is not None
+            else None
+        ),
     }
     with open(out_dir / "run_config.json", "w", encoding="utf-8") as fh:
         json.dump(run_config, fh, indent=2)

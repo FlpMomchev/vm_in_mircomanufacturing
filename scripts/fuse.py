@@ -109,13 +109,13 @@ def _print_summary(bundle: PredictionBundle, out_dir: str) -> None:
     print(f"\n=== Fusion complete: {bundle.modality} ===")
     print(f"Predictions  : {len(bundle.y_pred)}")
     print(f"Weights      : {[f'{w:.3f}' for w in bundle.metadata.get('weights', [])]}")
-    print(f"Fused MAE    : {bundle.validation_mae:.4f} mm  (weighted avg of source MAEs)")
-    print(f"Mean        : {bundle.sigma.mean():.4f} mm")
+    print(f"Reference MAE: {bundle.validation_mae:.4f} mm  (used for weighting)")
+    print(f"Mean sigma   : {bundle.sigma.mean():.4f} mm")
     if bundle.y_true is not None:
         import numpy as np
 
         mae = float(np.mean(np.abs(bundle.y_pred - bundle.y_true)))
-        print(f"Holdout MAE  : {mae:.4f} mm  (vs ground truth)")
+        print(f"Batch MAE    : {mae:.4f} mm  (vs provided ground truth)")
     print(f"Saved to     : {out_dir}/")
 
 

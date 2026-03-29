@@ -11,6 +11,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -79,6 +80,15 @@ def main() -> None:
     out_csv = args.out_csv or args.features_csv.replace(".csv", "_selected.csv")
     out_dir_sweep = Path(out_csv).parent / "FS_validation"
     df_sel, selected = select_features(df, cfg, out_csv=out_csv, sweep_dir=out_dir_sweep)
+
+    src_sidecar = Path(str(Path(args.features_csv)) + ".extractor_config.json")
+    dst_sidecar = Path(str(Path(out_csv)) + ".extractor_config.json")
+    if src_sidecar.exists():
+        dst_sidecar.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_sidecar, dst_sidecar)
+        logger.info("Copied extraction sidecar %s -> %s", src_sidecar, dst_sidecar)
+    else:
+        logger.warning("No extraction sidecar found next to %s", args.features_csv)
 
     print(f"\nSelected {len(selected)} features:")
     for f in selected:

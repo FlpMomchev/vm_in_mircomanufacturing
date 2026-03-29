@@ -376,12 +376,22 @@ def compute_machining_features(
 
 
 def compute_timefrequency_features(
-    y: np.ndarray, sr: int, nperseg: int = 8192, hop_length: int = 2048
+    y: np.ndarray,
+    sr: int,
+    nperseg: int = 8192,
+    hop_length: int = 2048,
+    stft_window: str = "hann",
 ) -> dict[str, float]:
     x = np.asarray(y, dtype=np.float64)
     feat: dict[str, float] = {}
 
-    freqs, times, Zxx = sig.stft(x, fs=sr, nperseg=nperseg, noverlap=nperseg - hop_length)
+    freqs, times, Zxx = sig.stft(
+        x,
+        fs=sr,
+        window=stft_window,
+        nperseg=nperseg,
+        noverlap=nperseg - hop_length,
+    )
     mag = np.abs(Zxx)
     pwr = mag**2
 
@@ -566,7 +576,11 @@ def compute_short_time_features(
 
 
 def compute_dwt_features(
-    y: np.ndarray, sr: int, wavelet: str = "db4", max_level: int = 8
+    y: np.ndarray,
+    sr: int,
+    wavelet: str = "db4",
+    max_level: int = 8,
+    padding_mode: str = "symmetric",
 ) -> dict[str, float]:
     x = np.asarray(y, dtype=np.float64).ravel()
     feat: dict[str, float] = {}
@@ -590,7 +604,7 @@ def compute_dwt_features(
 
     w = pywt.Wavelet(wavelet)
     level = int(max(1, min(max_level, pywt.dwt_max_level(x.size, w.dec_len))))
-    coeffs = pywt.wavedec(x, wavelet, level=level)
+    coeffs = pywt.wavedec(x, wavelet, mode=padding_mode, level=level)
     eps = 1e-10
     energies = [float(np.sum(c**2)) for c in coeffs]
     total = float(np.sum(energies)) + eps

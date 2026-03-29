@@ -1,34 +1,89 @@
 # configs/fusion.yaml
-#
-# Fusion layer configuration.
-# Architecture: inverse-validation-MAE weighted average per modality,
-# with propagated Gaussian uncertainty.
-#
-# Fusion stages (in order):
-#   1. airborne_feat  + airborne_dl  -> airborne_ensemble
-#   2. structure_feat + structure_dl -> structure_ensemble  (future)
-#   3. airborne_ensemble + structure_ensemble -> final prediction
-#
-# Weights are derived from validation MAE stored alongside each model bundle.
-# If a modality is absent its weight is treated as 0 (skipped gracefully).
-#
+# One-shot fused inference on new raw (unsplit) recordings.
 
-# Intra-modality fusion (feature-based + DL)
-intra_modality:
-  method: "inverse_mae_weighted"   # only option for now; extend in fuser.py
-  min_weight: 0.05                 # floor to prevent zero-weight collapse
+run:
+  out_dir: "data/fusion_results"
+  state_json: "data/fusion_results/final_prediction_state.json"
+  tag: "manual"
 
-# Inter-modality fusion (airborne + structure-borne)
-inter_modality:
-  method: "inverse_mae_weighted"
-  min_weight: 0.05
+inputs:
+  airborne:
+    enabled: true
+    raw_dir: "data/raw_data/air_borne/NEW_DOE"
+    file_glob: "**/*.flac"
+  structure:
+    enabled: true
+    raw_dir: "data/raw_data/structure_borne/NEW_DOE"
+    file_glob: "**/*.h5"
 
-# Uncertainty propagation
-uncertainty:
-  formula: "gaussian_propagation"  # sqrt(sum_i  w_i^2 * sigma_i^2)
+splitting:
+  segments_root:
+    airborne: "data/raw_data_extracted_splits/air/live"
+    structure: "data/raw_data_extracted_splits/structure/live"
 
-# Task for final output: "both" lets user choose at inference time
-task: "both"   # "regression" | "classification" | "both"
+  # If no DOE manifest is provided, a dummy DOE is created with:
+  # Step=1..expected_segments, HoleID=NA, Depth_mm=None.
+  expected_segments:
+    default: 25
+    map_xlsx: "docs/doe/Experiment_DOE.xlsx"
+    doe_sheet: "DOE_run_order"
 
-# Depth class labels (mm) for classification head
-depth_levels_mm: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  common:
+    band_low_hz: 2700.0
+    band_high_hz: 3300.0
+    # Optional fallback detection bands tried in order
+    band_fallbacks_hz:
+      - [2200.0, 2700.0]
+      - [2000.0, 2500.0]
+      - [3000.0, 3500.0]
+
+  airborne:
+    export_format: "flac"  # auto|flac|wav
+    target_sr: null
+    # Match airborne training split preset padding.
+    pre_pad_s: 0.20
+    post_pad_s: 0.25
+
+  structure:
+    export_format: "h5"    # auto|h5|npz
+    target_sr: 781250
+    # Match structure training split preset padding.
+    pre_pad_s: 0.05
+    post_pad_s: 0.05
+    h5_data_key: "measurement/data"
+    h5_time_key: "measurement/time_vector"
+
+models:
+  fusion:
+    # Legacy fusion.yaml semantics now live here:
+    # method: inverse_mae_weighted
+    # uncertainty: gaussian_propagation
+    min_weight: 0.025
+
+  airborne:
+    classical:
+      enabled: true
+      bundle_path: "models/features/air/final_model/final_model/ensemble_model_bundle.joblib"
+      fusion_mae_fallback: null
+      snap_predictions: false   # null=bundle default, false=off, true=on
+      snap_step_mm: null
+    dl:
+      enabled: true
+      model_dir: "models/dl/air/reg/air_spec_resnet_reg_BEST_MODEL"
+      fusion_mae_fallback: null
+      device: "cuda"            # auto|cpu|cuda
+      batch_size: null
+
+  structure:
+    classical:
+      enabled: true
+      bundle_path: "models/features/structure/default_features/final_models_balanced_v1/final_model/ensemble_model_bundle.joblib"
+      fusion_mae_fallback: null
+      snap_predictions: false
+      snap_step_mm: null
+    dl:
+      enabled: true
+      model_dir: "models/dl/structure/reg/linear_spec_res_net_FINAL"
+      fusion_mae_fallback: null
+      device: "cuda"
+      batch_size: null

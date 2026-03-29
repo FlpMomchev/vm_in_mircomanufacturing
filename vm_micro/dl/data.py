@@ -73,17 +73,17 @@ def _load_h5(
     data_key: str = "measurement/data",
     time_key: str = "measurement/time_vector",
 ) -> np.ndarray:
-    """Load an HDF5 measurement file, decimate then resample to target_sr.
+    """Load an HDF5 measurement file, decimate then resample to ``target_sr``.
 
     Strategy
     --------
-    Structure-borne native SR is ~3.125 MHz  far too high to resample
-    directly to 48 kHz in one step (ratio 65:1). A two-stage approach is applied:
+    Structure-borne native SR can be very high (for example ~781 kHz),
+    which is too high to resample in one step efficiently. A two-stage approach is applied:
       1. Decimate by the largest factor of 10 that keeps the intermediate
-         rate above 2  target_sr (anti-alias filter applied automatically
+         rate above ``2 * target_sr`` (anti-alias filter applied automatically
          by scipy.signal.decimate).
-      2. Resample the intermediate signal to exactly target_sr using
-         resample_poly.
+      2. Resample the intermediate signal to exactly ``target_sr`` using
+         ``resample_poly``.
     This avoids large intermediate arrays and numerical precision issues.
     """
     y, sr_native, _tv, _meta = read_measurement_h5(
@@ -91,6 +91,8 @@ def _load_h5(
         data_key=data_key,
         time_key=time_key,
         center_signal=True,
+        read_full_time_vector=False,
+        sr_probe_samples=4096,
     )
 
     y = np.asarray(y, dtype=np.float64).reshape(-1)

@@ -31,7 +31,7 @@ import argparse
 import sys
 from pathlib import Path
 
-#  ensure project root is importable when run directly
+# Ensure project root is importable when run directly.
 _HERE = Path(__file__).resolve().parent
 if str(_HERE.parent) not in sys.path:
     sys.path.insert(0, str(_HERE.parent))
@@ -138,7 +138,7 @@ def _run_single(args: argparse.Namespace) -> None:
         doe_df = load_doe(args.doe_xlsx, sheet_name=args.doe_sheet)
 
     if doe_df is None:
-        # Minimal DOE with no labels  filenames will use NA
+        # Minimal DOE with no labels; filenames will use "NA".
         import pandas as pd
 
         doe_df = pd.DataFrame(
@@ -175,8 +175,8 @@ def _run_batch(args: argparse.Namespace) -> None:
     if args.show_config:
         for name, cfg in configs:
             print(
-                f"\n[{name}]  band={cfg['BAND_HZ']}  glob={cfg['INPUT_GLOB']}"
-                f"  runs={len(cfg['EXPECTED_MAP'])}  "
+                f"\n[{name}] band={cfg['BAND_HZ']} glob={cfg['INPUT_GLOB']}"
+                f" runs={len(cfg['EXPECTED_MAP'])} "
                 f"fallbacks={cfg.get('BAND_HZ_FALLBACKS', [])}"
             )
 
@@ -203,7 +203,7 @@ def _run_batch(args: argparse.Namespace) -> None:
             target_sr=args.target_sr,
         )
         print(summary.to_string())
-        print(f"\nManifest  {out_root / f'manifest_{name}.csv'}")
+        print(f"\nManifest {out_root / f'manifest_{name}.csv'}")
 
 
 def _resolve_batch_configs(args: argparse.Namespace) -> list[tuple[str, dict]]:
