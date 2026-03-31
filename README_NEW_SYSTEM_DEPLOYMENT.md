@@ -87,11 +87,11 @@ $must = @(
   "configs/airborne.yaml",
   "configs/structure.yaml",
   "models/features/air/final_model/final_model/ensemble_model_bundle.joblib",
-  "models/dl/air/reg/air_spec_resnet_reg_BEST_MODEL/final_model/best_model.pt",
-  "models/dl/air/reg/air_spec_resnet_reg_BEST_MODEL/final_model/config.json",
+  "models/dl/air/best_model.pt",
+  "models/dl/air/config.json",
   "models/features/structure/default_features/final_models_balanced_v1/final_model/ensemble_model_bundle.joblib",
-  "models/dl/structure/reg/linear_spec_res_net_FINAL/final_model/best_model.pt",
-  "models/dl/structure/reg/linear_spec_res_net_FINAL/final_model/config.json"
+  "models/dl/structure/best_model.pt",
+  "models/dl/structure/config.json"
 )
 $must | ForEach-Object {
   if (Test-Path $_) { "OK`t$_" } else { "MISSING`t$_" }
