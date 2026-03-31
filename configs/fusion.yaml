@@ -25,7 +25,7 @@ splitting:
   # Step=1..expected_segments, HoleID=NA, Depth_mm=None.
   expected_segments:
     default: 25
-    map_xlsx: "docs/doe/Experiment_DOE.xlsx"
+    map_xlsx: "models/docs/doe/Experiment_DOE.xlsx"
     doe_sheet: "DOE_run_order"
 
   common:
@@ -64,13 +64,13 @@ models:
     classical:
       enabled: true
       bundle_path: "models/features/air/final_model/final_model/ensemble_model_bundle.joblib"
-      fusion_mae_fallback: null
+      fusion_mae_fallback: 0.01632
       snap_predictions: false   # null=bundle default, false=off, true=on
       snap_step_mm: null
     dl:
       enabled: true
-      model_dir: "models/dl/air/reg/air_spec_resnet_reg_BEST_MODEL"
-      fusion_mae_fallback: null
+      model_dir: "models/dl/air"
+      fusion_mae_fallback: 0.01820
       device: "cuda"            # auto|cpu|cuda
       batch_size: null
 
@@ -78,12 +78,12 @@ models:
     classical:
       enabled: true
       bundle_path: "models/features/structure/default_features/final_models_balanced_v1/final_model/ensemble_model_bundle.joblib"
-      fusion_mae_fallback: null
+      fusion_mae_fallback: 0.03415
       snap_predictions: false
       snap_step_mm: null
     dl:
       enabled: true
-      model_dir: "models/dl/structure/reg/linear_spec_res_net_FINAL"
-      fusion_mae_fallback: null
+      model_dir: "models/dl/structure"
+      fusion_mae_fallback: 0.13626
       device: "cuda"
       batch_size: null

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vm-dashboard-runtime"
+version = "0.1.0"
+description = "Lean runtime for the VM Shiny dashboard and fused prediction launcher."
+requires-python = ">=3.13"
+
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "soundfile>=0.12",
+    "librosa>=0.10",
+    "PyWavelets>=1.6",
+    "h5py>=3.11",
+    "openpyxl>=3.1",
+    "xgboost>=2.0",
+    "lightgbm>=4.3",
+    "catboost>=1.2",
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+    "joblib>=1.4",
+    "matplotlib>=3.9",
+    "shiny>=1.0",
+    "watchdog>=4.0",
+]
+
+[project.optional-dependencies]
+dl = [
+    "torch>=2.7",
+]
+
+[project.scripts]
+vm-dashboard-run = "app.launcher:main"
+vm-dashboard-watch = "app.watcher:run_latest_file_watcher"
+vm-predict-fused = "scripts.final_prediction:main"
+
+[tool.setuptools.package-dir]
+"" = ".."
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["app*", "vm_micro*", "scripts*"]
+exclude = ["tests*", "notebooks*"]

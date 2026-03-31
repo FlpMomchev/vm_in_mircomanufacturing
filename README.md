@@ -109,7 +109,7 @@ Metrics below are taken from the current artifact files in this repository.
 
 Note: many files in `data/fusion_results/**` are unlabeled production-style runs; holdout metrics there can be `0.0` because no ground truth is available.
 
-## Installation
+## Installation (standard package w/o app/dashboard)
 
 Requires Python 3.13+.
 

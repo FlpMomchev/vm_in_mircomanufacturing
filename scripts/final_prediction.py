@@ -72,6 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run fused prediction on new raw recordings (split->infer->fuse).",
     )
     p.add_argument("--config", default="configs/fusion.yaml")
+    p.add_argument(
+        "--airborne-input-path",
+        default=None,
+        help="Needed for the dashboard app. Deafult fallback is config.",
+    )
+    p.add_argument(
+        "--structure-input-path",
+        default=None,
+        help="Needed for the dashboard app. Deafult fallback is config.",
+    )
+
     p.add_argument("--out-dir", default=None, help="Override run.out_dir.")
     p.add_argument(
         "--only",
@@ -637,10 +648,17 @@ def _cleanup_single_model_predictions_csv(predictions_csv: Path) -> None:
             columns=["y_true", "residual_mm", "abs_residual_mm", "y_true_depth"],
             errors="ignore",
         )
-        base["y_true"] = y_true_series.to_numpy(dtype=np.float64)
-        base["residual_mm"] = residual.to_numpy(dtype=np.float64)
-        base["abs_residual_mm"] = np.abs(residual.to_numpy(dtype=np.float64))
-        df = base
+
+        extra = pd.DataFrame(
+            {
+                "y_true": y_true_series.to_numpy(dtype=np.float64),
+                "residual_mm": residual.to_numpy(dtype=np.float64),
+                "abs_residual_mm": np.abs(residual.to_numpy(dtype=np.float64)),
+            },
+            index=base.index,
+        )
+
+        df = pd.concat([base, extra], axis=1)
     else:
         df = df.drop(
             columns=[
@@ -1557,6 +1575,31 @@ def main() -> None:
         cfg = apply_overrides(cfg, args.override)
     if args.out_dir:
         cfg.setdefault("run", {})["out_dir"] = args.out_dir
+
+    if args.airborne_input_path or args.structure_input_path:
+        if args.airborne_input_path:
+            airborne_path = Path(args.airborne_input_path).expanduser().resolve()
+            if not airborne_path.is_file():
+                raise FileNotFoundError(f"--airborne-input-path does not exist: {airborne_path}")
+            if airborne_path.suffix.lower() not in {".flac", ".wav"}:
+                raise ValueError(f"Unsupported airborne suffix: {airborne_path.suffix.lower()}")
+            cfg["inputs"]["airborne"]["enabled"] = True
+            cfg["inputs"]["airborne"]["raw_dir"] = str(airborne_path.parent)
+            cfg["inputs"]["airborne"]["file_glob"] = airborne_path.name
+        else:
+            cfg["inputs"]["airborne"]["enabled"] = False
+
+        if args.structure_input_path:
+            structure_path = Path(args.structure_input_path).expanduser().resolve()
+            if not structure_path.is_file():
+                raise FileNotFoundError(f"--structure-input-path does not exist: {structure_path}")
+            if structure_path.suffix.lower() not in {".h5", ".hdf5"}:
+                raise ValueError(f"Unsupported structure suffix: {structure_path.suffix.lower()}")
+            cfg["inputs"]["structure"]["enabled"] = True
+            cfg["inputs"]["structure"]["raw_dir"] = str(structure_path.parent)
+            cfg["inputs"]["structure"]["file_glob"] = structure_path.name
+        else:
+            cfg["inputs"]["structure"]["enabled"] = False
 
     run_out_root = Path(cfg.get("run", {}).get("out_dir", "data/fusion_results"))
     state_path = Path(
