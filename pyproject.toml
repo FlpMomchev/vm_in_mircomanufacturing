@@ -7,7 +7,7 @@ name = "vm_in_micromanufacturing"
 version = "0.1.0"
 description = "Virtual metrology for micro-drilling depth prediction via airborne and structure-borne acoustic sensing."
 readme = "README.md"
-requires-python = ">=3.11.9"
+requires-python = ">=3.13"
 license = { text = "MIT" }
 
 dependencies = [
